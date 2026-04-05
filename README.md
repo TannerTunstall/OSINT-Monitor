@@ -341,3 +341,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, project structure,
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
+
+---
+
+Developed by [Tanner Tunstall](https://github.com/TannerTunstall) with help from Anthropic's [Claude Opus 4.6](https://claude.ai).
