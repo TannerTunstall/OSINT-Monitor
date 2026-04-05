@@ -24,21 +24,21 @@ One command. Includes auto-translation (LibreTranslate) out of the box. WhatsApp
 
 **Linux:**
 ```bash
-git clone https://github.com/tannertunstall/osint-monitor.git
+git clone https://github.com/TannerTunstall/OSINT-Monitor.git
 cd osint-monitor
 sudo bash setup.sh
 ```
 
 **macOS (Intel + Apple Silicon):**
 ```bash
-git clone https://github.com/tannertunstall/osint-monitor.git
+git clone https://github.com/TannerTunstall/OSINT-Monitor.git
 cd osint-monitor
 bash setup.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-git clone https://github.com/tannertunstall/osint-monitor.git
+git clone https://github.com/TannerTunstall/OSINT-Monitor.git
 cd osint-monitor
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```

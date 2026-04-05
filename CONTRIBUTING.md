@@ -4,7 +4,7 @@
 
 ```bash
 # Clone the repo
-git clone https://github.com/tannertunstall/osint-monitor.git
+git clone https://github.com/TannerTunstall/OSINT-Monitor.git
 cd osint-monitor
 
 # Create a virtual environment
