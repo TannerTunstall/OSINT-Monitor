@@ -349,7 +349,7 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
         waha_ok = await _ensure_waha_container()
         if not waha_ok:
             return web.json_response(
-                {"status": "error", "message": "WAHA container is not running. Run: docker compose --profile whatsapp up -d"},
+                {"status": "error", "message": "Could not start WhatsApp service. Check Docker is running and try again."},
                 status=502,
             )
 
