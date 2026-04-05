@@ -103,19 +103,15 @@
       </div>
       <div style="margin-top:12px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <label style="margin:0">LibreTranslate Status</label>
-          <button class="btn btn-sm btn-outline" onclick="checkTranslateStatus()">Refresh</button>
-        </div>
-        <div id="translate-status" style="font-size:12px;color:var(--text2)">Click Refresh to check.</div>
-        <div id="translate-languages" style="margin-top:8px"></div>
-        <div style="margin-top:10px">
-          <label>Languages to load (comma-separated <a href="https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes" target="_blank" style="font-size:11px">ISO 639 codes</a>)</label>
-          <div class="add-row">
-            <input type="text" id="translate-langs-input" placeholder="en,ar,fa,ru,zh,fr">
+          <label style="margin:0">LibreTranslate Languages</label>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-sm btn-outline" onclick="checkTranslateStatus()">Check Status</button>
             <button class="btn btn-sm btn-primary" onclick="saveTranslateLanguages()">Save & Rebuild</button>
           </div>
-          <p class="help">Changes require rebuilding the translate container. This downloads language models and may take a few minutes.</p>
         </div>
+        <div id="translate-status" style="font-size:12px;color:var(--text2);margin-bottom:8px">Click Check Status to see loaded languages.</div>
+        <div id="translate-lang-picker" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+        <p class="help" style="margin-top:8px">Check languages to load. English is always included. Save & Rebuild recreates the translate container — new models download automatically (may take a few minutes).</p>
       </div>
     </div>
     <!-- Radar -->
