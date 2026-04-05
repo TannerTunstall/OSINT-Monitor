@@ -1,6 +1,6 @@
 # OSINT Monitor
 
-Self-hosted intelligence monitoring. Watch Telegram, Twitter/X, RSS feeds, and Cloudflare Radar — get real-time alerts on WhatsApp, Discord, Slack, Signal, Email, or any webhook.
+Self-hosted intelligence monitoring. Watch Telegram, Twitter/X, RSS feeds, and Cloudflare Radar — get real-time alerts on WhatsApp, Discord, Slack, Signal, Email, or any webhook. Supports real-time translation across a multitude of languages to help teams quickly understand and classify signals. 
 
 ![OSINT Monitor Dashboard](docs/screenshot.png)
 
