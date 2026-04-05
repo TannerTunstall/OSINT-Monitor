@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OSINT Monitor</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<!-- ═══════════ WELCOME BANNER (first run only) ═══════════ -->
+<div class="wizard-overlay hidden" id="welcome-overlay">
+<div class="wizard">
+  <h2>Welcome to OSINT Monitor</h2>
+  <p class="subtitle">Get monitoring running in three steps.</p>
+  <div style="margin:20px 0;color:var(--text2);font-size:13px;line-height:1.9">
+    <div style="margin-bottom:10px"><strong style="color:var(--accent)">1.</strong> <strong style="color:var(--text)">Add a source</strong> — Telegram channel, X/Twitter account, RSS feed, or Cloudflare Radar</div>
+    <div style="margin-bottom:10px"><strong style="color:var(--accent)">2.</strong> <strong style="color:var(--text)">Add a delivery method</strong> — Discord webhook, Slack, Email, WhatsApp, Signal, or any webhook</div>
+    <div><strong style="color:var(--accent)">3.</strong> <strong style="color:var(--text)">Save &amp; Restart</strong> — the monitor starts polling and delivering alerts</div>
+  </div>
+  <div class="btn-group" style="justify-content:center">
+    <button class="btn btn-primary" onclick="switchTab('sources'); document.getElementById('welcome-overlay').classList.add('hidden')">Set Up Sources</button>
+    <button class="btn btn-outline" onclick="document.getElementById('welcome-overlay').classList.add('hidden')">Skip</button>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════ MAIN DASHBOARD ═══════════ -->
+<div id="main-app">
+<div class="header">
+  <h1><span class="logo-dot"></span> OSINT Monitor</h1>
+</div>
+<div class="container">
+  <div class="tabs">
+    <div class="tab active" data-tab="analytics">Dashboard</div>
+    <div class="tab" data-tab="sources">Sources</div>
+    <div class="tab" data-tab="delivery">Delivery</div>
+    <div class="tab" data-tab="feed">Feed</div>
+    <div class="tab" data-tab="filters">Filters</div>
+    <div class="tab" data-tab="credentials">Credentials</div>
+    <div class="tab" data-tab="logs">Logs</div>
+  </div>
+
+  <!-- ═══ SOURCES TAB ═══ -->
+  <div class="tab-content" id="tab-sources">
+    <!-- Telegram -->
+    <div class="card">
+      <h3>Telegram Channels</h3>
+      <div id="tg-auth-section"></div>
+      <label>Channels to monitor</label>
+      <div class="tag-list" id="tg-channels"></div>
+      <div class="add-row">
+        <input type="text" id="tg-channel-input" placeholder="@channel or https://t.me/channel or ID">
+        <button class="btn btn-sm btn-outline" onclick="addTag('tg-channels','tg-channel-input')">Add</button>
+      </div>
+      <p class="help">Use @username, t.me link, or numeric channel ID</p>
+    </div>
+    <!-- Twitter -->
+    <div class="card">
+      <h3>X / Twitter Accounts</h3>
+      <label>Accounts to monitor</label>
+      <div class="tag-list" id="tw-accounts"></div>
+      <div class="add-row">
+        <input type="text" id="tw-account-input" placeholder="username (no @)">
+        <button class="btn btn-sm btn-outline" onclick="addTag('tw-accounts','tw-account-input')">Add</button>
+      </div>
+      <label>Nitter Instances</label>
+      <div class="tag-list" id="tw-nitter"></div>
+      <div class="add-row">
+        <input type="text" id="tw-nitter-input" placeholder="https://nitter.example.com">
+        <button class="btn btn-sm btn-outline" onclick="addTag('tw-nitter','tw-nitter-input')">Add</button>
+      </div>
+    </div>
+    <!-- RSS -->
+    <div class="card">
+      <h3>RSS / Atom Feeds</h3>
+      <p class="help" style="margin-bottom:10px">Toggle common status feeds or add any RSS/Atom URL.</p>
+      <div id="feed-presets" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+      <label>Active Feeds</label>
+      <div id="rss-feeds"></div>
+      <div class="add-row" style="margin-top:12px">
+        <input type="text" id="rss-url-input" placeholder="Custom RSS/Atom URL" style="flex:2">
+        <input type="text" id="rss-label-input" placeholder="Label" style="flex:1">
+        <button class="btn btn-sm btn-outline" onclick="addRSSFeed()">Add</button>
+      </div>
+    </div>
+    <!-- Polling -->
+    <div class="card">
+      <h3>Polling Intervals</h3>
+      <div class="card-row" style="gap:16px">
+        <div style="flex:1"><label>Telegram (sec)</label><input type="number" id="poll-telegram" value="30" min="10"></div>
+        <div style="flex:1"><label>Twitter (sec)</label><input type="number" id="poll-twitter" value="300" min="60"></div>
+        <div style="flex:1"><label>RSS Feeds (sec)</label><input type="number" id="poll-rss" value="120" min="30"></div>
+      </div>
+    </div>
+    <!-- Translation -->
+    <div class="card">
+      <div class="toggle-row"><h3>Auto-Translate</h3><div class="toggle" id="translate-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div>
+      <div class="card-row" style="gap:16px">
+        <div style="flex:2"><label>LibreTranslate API URL</label><input type="text" id="translate-api-url" value="http://translate:5000"></div>
+        <div style="flex:1"><label>Target Language</label><input type="text" id="translate-target" value="en"></div>
+      </div>
+      <div style="margin-top:12px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label style="margin:0">LibreTranslate Status</label>
+          <button class="btn btn-sm btn-outline" onclick="checkTranslateStatus()">Refresh</button>
+        </div>
+        <div id="translate-status" style="font-size:12px;color:var(--text2)">Click Refresh to check.</div>
+        <div id="translate-languages" style="margin-top:8px"></div>
+        <div style="margin-top:10px">
+          <label>Languages to load (comma-separated <a href="https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes" target="_blank" style="font-size:11px">ISO 639 codes</a>)</label>
+          <div class="add-row">
+            <input type="text" id="translate-langs-input" placeholder="en,ar,fa,ru,zh,fr">
+            <button class="btn btn-sm btn-primary" onclick="saveTranslateLanguages()">Save & Rebuild</button>
+          </div>
+          <p class="help">Changes require rebuilding the translate container. This downloads language models and may take a few minutes.</p>
+        </div>
+      </div>
+    </div>
+    <!-- Radar -->
+    <div class="card">
+      <div class="toggle-row"><h3>Cloudflare Radar</h3><div class="toggle" id="radar-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div>
+      <label>Poll Interval (sec)</label>
+      <input type="number" id="poll-radar" value="300" min="60">
+      <label>Countries to monitor (ISO country code : name)</label>
+      <div class="tag-list" id="radar-countries"></div>
+      <div class="add-row">
+        <input type="text" id="radar-country-input" placeholder="US:United States" style="flex:1">
+        <button class="btn btn-sm btn-outline" onclick="addRadarCountry()">Add</button>
+      </div>
+      <p class="help">Leave empty to monitor global cloud outages only. API token is in the Credentials tab.</p>
+    </div>
+    <!-- Settings -->
+    <div class="card">
+      <h3>Settings</h3>
+      <div class="card-row" style="gap:16px">
+        <div style="flex:1">
+          <label>Message Retention (days)</label>
+          <input type="number" id="db-retention" value="90" min="1" max="365">
+        </div>
+        <div style="flex:1">
+          <label>Log Level</label>
+          <select id="log-level">
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO" selected>INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-success" onclick="saveAndRestart('sources')">Save &amp; Restart</button>
+    </div>
+    <p class="help">Saves config and restarts the monitor to apply changes. May take up to 30 seconds.</p>
+  </div>
+
+  <!-- ═══ DASHBOARD TAB (home) ═══ -->
+  <div class="tab-content active" id="tab-analytics">
+    <!-- KPI summary row -->
+    <div class="status-bar" id="analytics-summary" style="margin-bottom:16px"></div>
+
+    <!-- Connector health -->
+    <div class="status-bar" id="status-bar" style="margin-bottom:16px"></div>
+
+    <!-- Charts row 1: Volume + Source breakdown -->
+    <div class="card-row">
+      <div class="card" style="flex:2;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0">Message Volume</h3>
+          <div class="filter-bar" style="margin:0">
+            <button class="btn btn-sm btn-outline active" data-range="7d" onclick="setVolumeRange('7d')">7d</button>
+            <button class="btn btn-sm btn-outline" data-range="24h" onclick="setVolumeRange('24h')">24h</button>
+            <button class="btn btn-sm btn-outline" data-range="30d" onclick="setVolumeRange('30d')">30d</button>
+          </div>
+        </div>
+        <div style="position:relative;height:280px;margin-top:10px">
+          <canvas id="chart-volume"></canvas>
+        </div>
+      </div>
+      <div class="card" style="flex:1;min-width:240px">
+        <h3>By Source</h3>
+        <div style="position:relative;height:280px;display:flex;align-items:center;justify-content:center">
+          <canvas id="chart-sources"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts row 2: Daily activity + Top sources -->
+    <div class="card-row">
+      <div class="card" style="flex:2;min-width:0">
+        <h3>Daily Activity (30 days)</h3>
+        <div style="position:relative;height:220px">
+          <canvas id="chart-daily"></canvas>
+        </div>
+      </div>
+      <div class="card" style="flex:1;min-width:240px">
+        <h3>Top Sources</h3>
+        <div id="analytics-authors" style="font-size:12px;max-height:220px;overflow-y:auto"></div>
+      </div>
+    </div>
+
+    <!-- Row 3: Recent activity feed + keyword hits -->
+    <div class="card-row">
+      <div class="card" style="flex:2;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 style="margin:0">Recent Activity</h3>
+          <button class="btn btn-sm btn-outline" onclick="loadDashboardFeed()">Refresh</button>
+        </div>
+        <div id="dashboard-feed" style="max-height:300px;overflow-y:auto;font-size:12px"></div>
+      </div>
+      <div class="card" style="flex:1;min-width:240px">
+        <h3>System</h3>
+        <div id="dashboard-system" style="font-size:12px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ FEED TAB ═══ -->
+  <div class="tab-content" id="tab-feed">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div class="filter-bar" style="margin:0">
+        <button class="btn btn-sm btn-outline active" data-filter="all" onclick="setFeedSource('all')">All</button>
+        <button class="btn btn-sm btn-outline" data-filter="telegram" onclick="setFeedSource('telegram')">Telegram</button>
+        <button class="btn btn-sm btn-outline" data-filter="twitter" onclick="setFeedSource('twitter')">Twitter</button>
+        <button class="btn btn-sm btn-outline" data-filter="rss" onclick="setFeedSource('rss')">RSS</button>
+        <button class="btn btn-sm btn-outline" data-filter="radar" onclick="setFeedSource('radar')">Radar</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="text" id="feed-search" placeholder="Search messages..." style="width:200px;padding:5px 10px;font-size:12px" oninput="filterFeedSearch()">
+        <button class="btn btn-sm btn-outline" onclick="exportData('csv')">CSV</button>
+        <button class="btn btn-sm btn-outline" onclick="exportData('json')">JSON</button>
+        <button class="btn btn-sm btn-outline" onclick="loadFeed()">Refresh</button>
+      </div>
+    </div>
+    <div id="feed-count" style="font-size:11px;color:var(--text2);margin-bottom:8px"></div>
+    <div id="feed-list" class="feed-container">
+      <div class="feed-empty">Loading...</div>
+    </div>
+  </div>
+
+  <!-- ═══ DELIVERY TAB ═══ -->
+  <div class="tab-content" id="tab-delivery">
+    <!-- WhatsApp -->
+    <div class="card">
+      <div class="toggle-row"><h3>WhatsApp</h3><div class="toggle" id="wa-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div>
+      <label>WAHA API URL</label><input type="text" id="wa-api-url" value="http://whatsapp-api:3000">
+      <label>Session Name</label><input type="text" id="wa-session" value="default">
+      <label>Recipient Chat IDs</label>
+      <div class="tag-list" id="wa-chats"></div>
+      <div class="add-row"><input type="text" id="wa-chat-input" placeholder="12025551234@c.us"><button class="btn btn-sm btn-outline" onclick="addTag('wa-chats','wa-chat-input')">Add</button></div>
+      <p class="help">Individual: phone@c.us | Group: groupid@g.us</p>
+      <div style="margin-top:12px">
+        <button class="btn btn-sm btn-outline" onclick="showWhatsAppQR()">Pair WhatsApp (QR Code)</button>
+      </div>
+    </div>
+    <!-- Signal -->
+    <div class="card">
+      <div class="toggle-row"><h3>Signal</h3><div class="toggle" id="sig-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div>
+      <label>signal-cli API URL</label><input type="text" id="sig-api-url" value="http://signal-api:8080">
+      <label>Sender Phone Number</label><input type="text" id="sig-sender" placeholder="+1234567890">
+      <label>Recipients</label>
+      <div class="tag-list" id="sig-recipients"></div>
+      <div class="add-row"><input type="text" id="sig-recipient-input" placeholder="+1234567890"><button class="btn btn-sm btn-outline" onclick="addTag('sig-recipients','sig-recipient-input')">Add</button></div>
+    </div>
+    <!-- Discord + Slack -->
+    <div class="card-row">
+      <div class="card">
+        <div class="toggle-row"><h3>Discord</h3><div class="toggle" id="discord-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div>
+        <label>Webhook URLs</label>
+        <div class="tag-list" id="discord-webhooks"></div>
+        <div class="add-row"><input type="text" id="discord-webhook-input" placeholder="https://discord.com/api/webhooks/..."><button class="btn btn-sm btn-outline" onclick="addTag('discord-webhooks','discord-webhook-input')">Add</button></div>
+      </div>
+      <div class="card">
+        <div class="toggle-row"><h3>Slack</h3><div class="toggle" id="slack-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div>
+        <label>Webhook URLs</label>
+        <div class="tag-list" id="slack-webhooks"></div>
+        <div class="add-row"><input type="text" id="slack-webhook-input" placeholder="https://hooks.slack.com/services/..."><button class="btn btn-sm btn-outline" onclick="addTag('slack-webhooks','slack-webhook-input')">Add</button></div>
+      </div>
+    </div>
+    <!-- Email -->
+    <div class="card">
+      <div class="toggle-row"><h3>Email (SMTP)</h3><div class="toggle" id="email-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div>
+      <div class="card-row" style="gap:16px">
+        <div style="flex:2"><label>SMTP Host</label><input type="text" id="email-smtp-host" placeholder="smtp.gmail.com"></div>
+        <div style="flex:1"><label>Port</label><input type="number" id="email-smtp-port" value="587"></div>
+        <div style="flex:1"><div class="toggle-row"><label style="margin:0">TLS</label><div class="toggle on" id="email-tls-toggle" role="switch" aria-checked="true" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div></div>
+      </div>
+      <label>From Address</label><input type="text" id="email-from" placeholder="alerts@example.com">
+      <label>Recipients</label>
+      <div class="tag-list" id="email-to"></div>
+      <div class="add-row"><input type="text" id="email-to-input" placeholder="analyst@example.com"><button class="btn btn-sm btn-outline" onclick="addTag('email-to','email-to-input')">Add</button></div>
+      <p class="help">SMTP username and password are set in the Credentials tab.</p>
+    </div>
+    <!-- Webhook -->
+    <div class="card">
+      <div class="toggle-row"><h3>Webhook</h3><div class="toggle" id="webhook-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div>
+      <p class="help" style="margin-bottom:10px">Send alerts to any HTTP endpoint. Works with PagerDuty, n8n, Zapier, custom APIs, etc.</p>
+      <label>Endpoints</label>
+      <div id="webhook-endpoints"></div>
+      <div class="add-row" style="margin-top:8px">
+        <input type="text" id="webhook-url-input" placeholder="https://your-endpoint.com/webhook" style="flex:2">
+        <select id="webhook-method-input" style="flex:0 0 90px">
+          <option value="POST">POST</option>
+          <option value="PUT">PUT</option>
+        </select>
+        <button class="btn btn-sm btn-outline" onclick="addWebhookEndpoint()">Add</button>
+      </div>
+      <p class="help">Use ${WEBHOOK_TOKEN} in headers (set in Credentials tab). Body sends <code>{"message": "..."}</code> by default.</p>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-success" onclick="saveAndRestart('notifiers')">Save &amp; Restart</button>
+      <button class="btn btn-outline" onclick="testNotification()">Send Test</button>
+    </div>
+    <p class="help">Saves config and restarts the monitor to apply changes. May take up to 30 seconds.</p>
+    <div class="card" style="margin-top:14px">
+      <h3>Test Source Messages</h3>
+      <p class="help" style="margin-bottom:10px">Send a sample message through the full pipeline (translate, filter, format, deliver).</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-outline" onclick="testSource('telegram')">Telegram</button>
+        <button class="btn btn-sm btn-outline" onclick="testSource('telegram_translation')">Telegram (Translation)</button>
+        <button class="btn btn-sm btn-outline" onclick="testSource('twitter')">Twitter/X</button>
+        <button class="btn btn-sm btn-outline" onclick="testSource('rss')">RSS Feed</button>
+        <button class="btn btn-sm btn-outline" onclick="testSource('radar_anomaly')">Radar (Anomaly)</button>
+        <button class="btn btn-sm btn-outline" onclick="testSource('radar_outage')">Radar (Outage)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ FILTERS TAB ═══ -->
+  <div class="tab-content" id="tab-filters">
+    <p class="help" style="margin-bottom:14px">Keywords are matched against translated text. Leave include empty to forward all. Per-source filters override the default.</p>
+    <div class="card">
+      <h3>Default Keywords (all sources)</h3>
+      <label>Include</label>
+      <div class="tag-list" id="filter-default-include"></div>
+      <div class="add-row"><input type="text" id="filter-default-include-input" placeholder="keyword"><button class="btn btn-sm btn-outline" onclick="addTag('filter-default-include','filter-default-include-input')">Add</button></div>
+      <label>Exclude</label>
+      <div class="tag-list" id="filter-default-exclude"></div>
+      <div class="add-row"><input type="text" id="filter-default-exclude-input" placeholder="keyword"><button class="btn btn-sm btn-outline" onclick="addTag('filter-default-exclude','filter-default-exclude-input')">Add</button></div>
+    </div>
+    <div class="card-row">
+      <div class="card">
+        <h3>Telegram</h3>
+        <label>Include</label>
+        <div class="tag-list" id="filter-telegram-include"></div>
+        <div class="add-row"><input type="text" id="filter-telegram-include-input" placeholder="keyword"><button class="btn btn-sm btn-outline" onclick="addTag('filter-telegram-include','filter-telegram-include-input')">Add</button></div>
+        <label>Exclude</label>
+        <div class="tag-list" id="filter-telegram-exclude"></div>
+        <div class="add-row"><input type="text" id="filter-telegram-exclude-input" placeholder="keyword"><button class="btn btn-sm btn-outline" onclick="addTag('filter-telegram-exclude','filter-telegram-exclude-input')">Add</button></div>
+      </div>
+      <div class="card">
+        <h3>Twitter/X</h3>
+        <label>Include</label>
+        <div class="tag-list" id="filter-twitter-include"></div>
+        <div class="add-row"><input type="text" id="filter-twitter-include-input" placeholder="keyword"><button class="btn btn-sm btn-outline" onclick="addTag('filter-twitter-include','filter-twitter-include-input')">Add</button></div>
+        <label>Exclude</label>
+        <div class="tag-list" id="filter-twitter-exclude"></div>
+        <div class="add-row"><input type="text" id="filter-twitter-exclude-input" placeholder="keyword"><button class="btn btn-sm btn-outline" onclick="addTag('filter-twitter-exclude','filter-twitter-exclude-input')">Add</button></div>
+      </div>
+      <div class="card">
+        <h3>RSS Feeds</h3>
+        <label>Include</label>
+        <div class="tag-list" id="filter-rss-include"></div>
+        <div class="add-row"><input type="text" id="filter-rss-include-input" placeholder="keyword"><button class="btn btn-sm btn-outline" onclick="addTag('filter-rss-include','filter-rss-include-input')">Add</button></div>
+        <label>Exclude</label>
+        <div class="tag-list" id="filter-rss-exclude"></div>
+        <div class="add-row"><input type="text" id="filter-rss-exclude-input" placeholder="keyword"><button class="btn btn-sm btn-outline" onclick="addTag('filter-rss-exclude','filter-rss-exclude-input')">Add</button></div>
+      </div>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-success" onclick="saveAndRestart('filters')">Save &amp; Restart</button>
+    </div>
+    <p class="help">Saves config and restarts the monitor to apply changes. May take up to 30 seconds.</p>
+  </div>
+
+  <!-- ═══ CREDENTIALS TAB ═══ -->
+  <div class="tab-content" id="tab-credentials">
+    <div class="card">
+      <h3>Telegram</h3>
+      <p class="help" style="margin-bottom:10px">Get credentials from <a href="https://my.telegram.org" target="_blank">my.telegram.org</a> > API development tools.</p>
+      <div class="card-row" style="gap:16px">
+        <div style="flex:1"><label>API ID</label><input type="text" id="cred-telegram-api-id" placeholder="12345678"></div>
+        <div style="flex:1"><label>API Hash</label><input type="password" id="cred-telegram-api-hash" placeholder="abcdef1234..."></div>
+      </div>
+      <div style="margin-top:12px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <label style="margin:0">Account Authentication</label>
+          <span id="tg-auth-badge" style="font-size:11px"></span>
+        </div>
+        <div id="tg-auth-controls">
+          <div class="add-row">
+            <input type="text" id="tg-phone" placeholder="+1234567890 (phone with country code)">
+            <button class="btn btn-sm btn-primary" onclick="tgAuthStart()">Send Code</button>
+          </div>
+        </div>
+        <div class="hidden" id="tg-code-section">
+          <div class="add-row">
+            <input type="text" id="tg-code" placeholder="Verification code from Telegram">
+            <button class="btn btn-sm btn-primary" onclick="tgAuthCode()">Verify</button>
+          </div>
+        </div>
+        <div class="hidden" id="tg-2fa-section">
+          <div class="add-row">
+            <input type="password" id="tg-2fa" placeholder="2FA password">
+            <button class="btn btn-sm btn-primary" onclick="tgAuth2fa()">Submit</button>
+          </div>
+        </div>
+        <div id="tg-auth-status"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Other Credentials</h3>
+      <p class="help" style="margin-bottom:12px">Values are masked. Enter a new value to update, or leave as-is to keep current.</p>
+      <label>Signal Sender Number</label><input type="text" id="cred-signal-sender" placeholder="+1234567890">
+      <label>Cloudflare Radar API Token</label><input type="password" id="cred-radar-token" placeholder="cfat_...">
+      <label>SMTP Username (for Email notifier)</label><input type="text" id="cred-smtp-username" placeholder="user@gmail.com">
+      <label>SMTP Password</label><input type="password" id="cred-smtp-password" placeholder="app password or SMTP password">
+      <label>Webhook Auth Token (referenced as ${WEBHOOK_TOKEN} in config)</label><input type="password" id="cred-webhook-token" placeholder="Bearer token or API key">
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-success" onclick="saveAndRestart('credentials')">Save &amp; Restart</button>
+    </div>
+    <p class="help">Saves credentials and restarts the monitor to apply changes. May take up to 30 seconds.</p>
+  </div>
+
+  <!-- ═══ LOGS TAB ═══ -->
+  <div class="tab-content" id="tab-logs">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0">Live Logs</h3>
+        <div style="display:flex;gap:6px;align-items:center">
+          <label style="margin:0;font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;text-transform:none">
+            <input type="checkbox" id="log-auto-refresh" checked onchange="toggleLogAutoRefresh()"> Auto
+          </label>
+          <button class="btn btn-sm btn-danger" onclick="clearLogs()">Clear</button>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <button class="btn btn-sm btn-outline active" data-filter="all" onclick="setLogFilter('all')">All</button>
+        <button class="btn btn-sm btn-outline" data-filter="error" onclick="setLogFilter('error')" style="color:var(--red)">Errors</button>
+        <button class="btn btn-sm btn-outline" data-filter="warning" onclick="setLogFilter('warning')" style="color:var(--orange)">Warnings</button>
+        <button class="btn btn-sm btn-outline" data-filter="info" onclick="setLogFilter('info')" style="color:var(--green)">Info</button>
+        <span style="color:var(--border)">|</span>
+        <button class="btn btn-sm btn-outline" data-filter="telegram" onclick="setLogFilter('telegram')">TG</button>
+        <button class="btn btn-sm btn-outline" data-filter="twitter" onclick="setLogFilter('twitter')">TW</button>
+        <button class="btn btn-sm btn-outline" data-filter="rss" onclick="setLogFilter('rss')">RSS</button>
+        <button class="btn btn-sm btn-outline" data-filter="radar" onclick="setLogFilter('radar')">RAD</button>
+        <button class="btn btn-sm btn-outline" data-filter="whatsapp" onclick="setLogFilter('whatsapp')">WA</button>
+        <button class="btn btn-sm btn-outline" data-filter="translate" onclick="setLogFilter('translate')">TR</button>
+      </div>
+      <div class="log-viewer" id="log-viewer">Loading...</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- WhatsApp QR modal -->
+<div class="wizard-overlay hidden" id="qr-modal" onclick="if(event.target===this)this.classList.add('hidden')">
+<div class="wizard" style="max-width:400px;text-align:center">
+  <h3>Pair WhatsApp</h3>
+  <p class="help" style="margin-bottom:12px">WhatsApp > Settings > Linked Devices > Link a Device</p>
+  <div class="qr-container" id="modal-qr-container"><p style="color:var(--text2)">Loading...</p></div>
+  <div id="wa-pair-status"></div>
+  <div class="btn-group" style="justify-content:center">
+    <button class="btn btn-outline" onclick="waStartSession()">Start Session</button>
+    <button class="btn btn-outline" onclick="loadModalQR()">Refresh QR</button>
+    <button class="btn btn-success" onclick="waCheckStatus()">I've scanned it</button>
+    <button class="btn btn-primary" onclick="document.getElementById('qr-modal').classList.add('hidden')">Done</button>
+  </div>
+</div>
+</div>
+
+<!-- Restart overlay -->
+<div class="wizard-overlay hidden" id="restart-overlay" style="flex-direction:column;gap:16px">
+  <div style="text-align:center">
+    <div class="logo-dot" style="width:16px;height:16px;margin:0 auto 16px"></div>
+    <h2 style="font-size:18px;margin-bottom:8px" id="restart-title">Restarting monitor...</h2>
+    <p style="color:var(--text2);font-size:13px" id="restart-subtitle">This may take up to 30 seconds.</p>
+  </div>
+</div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

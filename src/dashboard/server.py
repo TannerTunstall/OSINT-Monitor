@@ -1,0 +1,766 @@
+import logging
+from pathlib import Path
+
+import aiohttp
+import yaml
+from aiohttp import web
+
+from src.dashboard.telegram_auth import TelegramAuthManager, add_telegram_auth_routes
+from src.health import HealthRegistry
+
+logger = logging.getLogger(__name__)
+
+CONFIG_PATH = "config.yaml"
+ENV_PATH = ".env"
+SESSION_DIR = "session"
+
+
+def _read_config() -> dict:
+    p = Path(CONFIG_PATH)
+    if not p.exists():
+        return {}
+    try:
+        with open(p) as f:
+            raw = yaml.safe_load(f)
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_config(data: dict):
+    with open(CONFIG_PATH, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
+def _read_env() -> dict[str, str]:
+    env = {}
+    p = Path(ENV_PATH)
+    if p.exists():
+        for line in p.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                env[k.strip()] = v.strip()
+    return env
+
+
+def _write_env(env: dict[str, str]):
+    lines = []
+    for k, v in env.items():
+        lines.append(f"{k}={v}")
+    Path(ENV_PATH).write_text("\n".join(lines) + "\n")
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    return "*" * min(len(value), 12)
+
+
+def _is_setup_complete() -> bool:
+    """Check if minimum setup has been done."""
+    env = _read_env()
+    has_creds = bool(env.get("TELEGRAM_API_ID")) and bool(env.get("TELEGRAM_API_HASH"))
+    has_session = any(Path(SESSION_DIR).glob("*.session")) if Path(SESSION_DIR).exists() else False
+    cfg = _read_config()
+    has_notifier = bool(cfg.get("notifiers", {}).get("whatsapp", {}).get("chat_ids")) or \
+                   bool(cfg.get("notifiers", {}).get("signal", {}).get("recipients"))
+    return has_creds and has_session and has_notifier
+
+
+def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=None, pipeline=None, db=None) -> web.Application:
+    @web.middleware
+    async def security_headers(request, handler):
+        response = await handler(request)
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['Referrer-Policy'] = 'same-origin'
+        return response
+
+    @web.middleware
+    async def error_middleware(request, handler):
+        try:
+            return await handler(request)
+        except web.HTTPException:
+            raise
+        except (ValueError, KeyError) as e:
+            return web.json_response({"status": "error", "message": f"Invalid request: {e}"}, status=400)
+        except Exception as e:
+            logger.exception("Unhandled error in %s %s", request.method, request.path)
+            return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+    app = web.Application(middlewares=[security_headers, error_middleware])
+    app["health"] = health
+    app["notifiers"] = notifiers
+    app["restart_callback"] = restart_callback
+    app["pipeline"] = pipeline
+    app["db"] = db
+
+    telegram_auth = TelegramAuthManager()
+
+    static_dir = Path(__file__).parent / "static"
+
+    async def index(request):
+        return web.FileResponse(static_dir / "index.html")
+
+    # ── Setup status ─────────────────────────────────────────
+
+    async def api_setup_status(request):
+        env = _read_env()
+        cfg = _read_config()
+
+        has_telegram_creds = bool(env.get("TELEGRAM_API_ID")) and bool(env.get("TELEGRAM_API_HASH"))
+        has_telegram_session = any(Path(SESSION_DIR).glob("*.session")) if Path(SESSION_DIR).exists() else False
+
+        # Any source configured (not just Telegram)
+        sources = cfg.get("sources") or {}
+        has_sources = bool(sources)
+
+        # Any notifier configured (not just WhatsApp)
+        notifiers = cfg.get("notifiers") or {}
+        has_notifier = any(
+            isinstance(v, dict) and v.get("enabled", True) and (
+                v.get("chat_ids") or v.get("recipients") or v.get("webhook_urls") or v.get("to_addresses") or v.get("urls")
+            )
+            for v in notifiers.values()
+        )
+
+        # Setup is complete if there is at least one source AND one notifier
+        setup_complete = has_sources and has_notifier
+
+        return web.json_response({
+            "setup_complete": setup_complete,
+            "has_sources": has_sources,
+            "has_notifier": has_notifier,
+            "telegram_creds": has_telegram_creds,
+            "telegram_authed": has_telegram_session,
+        })
+
+    # ── Health / Status ──────────────────────────────────────
+
+    async def api_health(request):
+        return web.json_response(health.summary())
+
+    # ── Config: full read/write ──────────────────────────────
+
+    async def api_config_get(request):
+        return web.json_response(_read_config())
+
+    async def api_config_put(request):
+        data = await request.json()
+        from src.config import validate_config
+        errors = validate_config(data)
+        if errors:
+            return web.json_response({"status": "error", "errors": errors}, status=400)
+        _write_config(data)
+        logger.info("Config updated via dashboard")
+        return web.json_response({"status": "ok", "message": "Config saved. Restart to apply."})
+
+    async def api_config_validate(request):
+        data = await request.json()
+        from src.config import validate_config
+        errors = validate_config(data)
+        if errors:
+            return web.json_response({"valid": False, "errors": errors})
+        return web.json_response({"valid": True, "errors": []})
+
+    # ── Sources CRUD ─────────────────────────────────────────
+
+    async def api_sources_get(request):
+        return web.json_response(_read_config().get("sources", {}))
+
+    async def api_sources_put(request):
+        data = await request.json()
+        cfg = _read_config()
+        cfg["sources"] = data
+        _write_config(cfg)
+        return web.json_response({"status": "ok", "message": "Sources updated. Restart to apply."})
+
+    # ── Notifiers CRUD ───────────────────────────────────────
+
+    async def api_notifiers_get(request):
+        return web.json_response(_read_config().get("notifiers", {}))
+
+    async def api_notifiers_put(request):
+        data = await request.json()
+        cfg = _read_config()
+        cfg["notifiers"] = data
+        _write_config(cfg)
+        return web.json_response({"status": "ok", "message": "Notifiers updated. Restart to apply."})
+
+    # ── Filters ──────────────────────────────────────────────
+
+    async def api_filters_get(request):
+        return web.json_response(_read_config().get("filters", {}))
+
+    async def api_filters_put(request):
+        data = await request.json()
+        cfg = _read_config()
+        cfg["filters"] = data
+        _write_config(cfg)
+        return web.json_response({"status": "ok", "message": "Filters updated. Restart to apply."})
+
+    # ── Polling intervals ────────────────────────────────────
+
+    async def api_polling_get(request):
+        return web.json_response(_read_config().get("polling", {}))
+
+    async def api_polling_put(request):
+        data = await request.json()
+        cfg = _read_config()
+        cfg["polling"] = data
+        _write_config(cfg)
+        return web.json_response({"status": "ok", "message": "Polling config updated. Restart to apply."})
+
+    # ── Credentials (.env) ───────────────────────────────────
+
+    async def api_credentials_get(request):
+        env = _read_env()
+        masked = {k: _mask_secret(v) for k, v in env.items()}
+        return web.json_response(masked)
+
+    async def api_credentials_put(request):
+        data = await request.json()
+        current = _read_env()
+        for k, v in data.items():
+            if v and not v.endswith("****"):
+                current[k] = v
+        _write_env(current)
+        logger.info("Credentials updated via dashboard")
+        return web.json_response({"status": "ok", "message": "Credentials saved. Restart to apply."})
+
+    # ── WhatsApp QR / status proxy (from WAHA) ───────────────
+
+    async def _get_waha_url(self=None):
+        cfg = _read_config()
+        wa_cfg = cfg.get("notifiers", {}).get("whatsapp", {})
+        return wa_cfg.get("api_url", "http://whatsapp-api:3000"), wa_cfg.get("session_name", "default")
+
+    async def _ensure_waha_container():
+        """Start the WAHA Docker container if it's not running.
+        Creates and pulls the image if the container doesn't exist.
+        Returns True if WAHA becomes reachable."""
+        import asyncio as _asyncio
+        import json as _json
+        api_url, _ = await _get_waha_url()
+
+        # First check if WAHA is already reachable
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{api_url}/api/sessions", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                    if resp.status == 200:
+                        return True
+        except Exception:
+            pass
+
+        logger.info("WAHA not reachable — managing container via Docker socket...")
+        try:
+            async with aiohttp.ClientSession(connector=aiohttp.UnixConnector(path="/var/run/docker.sock")) as docker:
+                # Check if container exists
+                async with docker.get("http://localhost/containers/whatsapp-api/json") as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        state = data.get("State", {}).get("Status", "")
+                        if state != "running":
+                            logger.info("Starting stopped WAHA container (state: %s)...", state)
+                            await docker.post("http://localhost/containers/whatsapp-api/start")
+
+                    elif resp.status == 404:
+                        # Container doesn't exist — pull image and create it
+                        env = _read_env()
+                        waha_tag = env.get("WAHA_TAG", "latest")
+                        image = f"devlikeapro/waha:{waha_tag}"
+
+                        # Pull image
+                        logger.info("Pulling WAHA image: %s (this may take a minute)...", image)
+                        async with docker.post(
+                            f"http://localhost/images/create?fromImage=devlikeapro/waha&tag={waha_tag}",
+                            timeout=aiohttp.ClientTimeout(total=300),
+                        ) as pull_resp:
+                            if pull_resp.status not in (200, 201):
+                                body = await pull_resp.text()
+                                logger.error("Failed to pull WAHA image: %d %s", pull_resp.status, body[:200])
+                                return False
+                            # Read stream to completion
+                            async for _ in pull_resp.content:
+                                pass
+                        logger.info("WAHA image pulled successfully.")
+
+                        # Create container
+                        import os
+                        app_dir = os.path.dirname(os.path.abspath("config.yaml"))
+                        container_config = {
+                            "Image": image,
+                            "Env": [
+                                "WAHA_DEFAULT_SESSION=default",
+                                "WAHA_NO_API_KEY=True",
+                                "WAHA_DASHBOARD_NO_PASSWORD=True",
+                                "WHATSAPP_RESTART_ALL_SESSIONS=True",
+                            ],
+                            "HostConfig": {
+                                "Binds": [f"{app_dir}/whatsapp-data:/app/.sessions"],
+                                "PortBindings": {"3000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "3000"}]},
+                                "RestartPolicy": {"Name": "no"},
+                            },
+                            "ExposedPorts": {"3000/tcp": {}},
+                        }
+                        logger.info("Creating WAHA container...")
+                        async with docker.post(
+                            "http://localhost/containers/create?name=whatsapp-api",
+                            json=container_config,
+                        ) as create_resp:
+                            if create_resp.status not in (200, 201):
+                                body = await create_resp.text()
+                                logger.error("Failed to create WAHA container: %d %s", create_resp.status, body[:200])
+                                return False
+
+                        # Start container
+                        await docker.post("http://localhost/containers/whatsapp-api/start")
+                        logger.info("WAHA container created and started.")
+
+        except Exception as e:
+            logger.warning("Cannot manage WAHA via Docker: %s", e)
+            return False
+
+        # Wait for WAHA to become reachable
+        for attempt in range(30):
+            await _asyncio.sleep(2)
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{api_url}/api/sessions", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                        if resp.status == 200:
+                            logger.info("WAHA is now reachable.")
+                            return True
+            except Exception:
+                pass
+            logger.info("Waiting for WAHA... (attempt %d/30)", attempt + 1)
+
+        logger.warning("WAHA did not become reachable after 60 seconds.")
+        return False
+
+    async def api_whatsapp_start(request):
+        """Start a WAHA session so it enters SCAN_QR_CODE state.
+        Ensures the WAHA container is running first."""
+        import asyncio as _asyncio
+
+        # Ensure WAHA container is running
+        waha_ok = await _ensure_waha_container()
+        if not waha_ok:
+            return web.json_response(
+                {"status": "error", "message": "WAHA container is not running. Run: docker compose --profile whatsapp up -d"},
+                status=502,
+            )
+
+        api_url, session_name = await _get_waha_url()
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Stop session first (clears FAILED/STOPPED state)
+                stop_url = f"{api_url}/api/sessions/stop"
+                async with session.post(stop_url, json={"name": session_name}) as resp:
+                    stop_body = await resp.text()
+                    logger.info("WAHA stop response %d: %s", resp.status, stop_body[:200])
+
+                await _asyncio.sleep(1)
+
+                # Now start fresh
+                start_url = f"{api_url}/api/sessions/start"
+                async with session.post(start_url, json={"name": session_name}) as resp:
+                    start_body = await resp.text()
+                    logger.info("WAHA start response %d: %s", resp.status, start_body[:200])
+
+                # Wait for session to initialize
+                await _asyncio.sleep(3)
+
+                # Check status
+                status_url = f"{api_url}/api/sessions/{session_name}"
+                async with session.get(status_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    else:
+                        body = await resp.text()
+                        return web.json_response(
+                            {"status": "unknown", "message": f"Status check returned {resp.status}: {body}"}
+                        )
+        except aiohttp.ClientError as e:
+            return web.json_response(
+                {"status": "error", "message": f"Cannot reach WhatsApp API: {e}"},
+                status=502,
+            )
+
+    async def api_whatsapp_qr(request):
+        api_url, session_name = await _get_waha_url()
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Get QR code as base64 JSON (more reliable than image proxy)
+                qr_url = f"{api_url}/api/{session_name}/auth/qr"
+                headers = {"Accept": "application/json"}
+                async with session.get(qr_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    elif resp.status == 404:
+                        return web.json_response(
+                            {"status": "not_ready", "message": "Session not started. Click 'Start Session' first."},
+                            status=404,
+                        )
+                    else:
+                        body = await resp.text()
+                        return web.json_response(
+                            {"status": "error", "message": f"WAHA returned {resp.status}: {body}"},
+                            status=resp.status,
+                        )
+        except aiohttp.ClientError as e:
+            return web.json_response(
+                {"status": "error", "message": f"Cannot reach WhatsApp API: {e}"},
+                status=502,
+            )
+
+    async def api_whatsapp_status(request):
+        api_url, session_name = await _get_waha_url()
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{api_url}/api/sessions/{session_name}"
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return web.json_response(data)
+                    elif resp.status == 404:
+                        return web.json_response({"status": "STOPPED", "message": "Session not found."})
+                    else:
+                        body = await resp.text()
+                        return web.json_response({"status": "error", "message": body}, status=resp.status)
+        except aiohttp.ClientError as e:
+            return web.json_response(
+                {"status": "error", "message": f"Cannot reach WhatsApp API: {e}"},
+                status=502,
+            )
+
+    # ── Test notification ────────────────────────────────────
+
+    async def api_test_notification(request):
+        test_msg = "[OSINT MONITOR] Test notification — if you see this, delivery is working."
+        results = []
+        for notifier in app["notifiers"]:
+            name = notifier.__class__.__name__
+            try:
+                ok = await notifier.send(test_msg)
+                results.append({"notifier": name, "success": ok})
+            except Exception as e:
+                results.append({"notifier": name, "success": False, "error": str(e)})
+        return web.json_response({"results": results})
+
+    # ── LibreTranslate status ────────────────────────────────
+
+    async def api_translate_status(request):
+        """Check LibreTranslate availability, loaded languages, and configured languages."""
+        cfg = _read_config()
+        api_url = (cfg.get("translation") or {}).get("api_url", "http://translate:5000")
+
+        # Read LT_LOAD_ONLY from docker-compose.yml
+        configured_langs = ""
+        try:
+            compose_path = Path(CONFIG_PATH).parent / "docker-compose.yml"
+            if compose_path.exists():
+                import re
+                text = compose_path.read_text()
+                m = re.search(r"LT_LOAD_ONLY=([^\s#]+)", text)
+                if m:
+                    configured_langs = m.group(1)
+        except Exception:
+            pass
+
+        try:
+            import aiohttp as _aiohttp
+            async with _aiohttp.ClientSession() as session:
+                async with session.get(f"{api_url.rstrip('/')}/languages", timeout=_aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        langs = await resp.json()
+                        return web.json_response({
+                            "ok": True,
+                            "languages": langs,
+                            "configured": configured_langs,
+                        })
+                    return web.json_response({"ok": False, "error": f"HTTP {resp.status}", "configured": configured_langs})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e), "configured": configured_langs})
+
+    async def api_translate_configure(request):
+        """Update LT_LOAD_ONLY in docker-compose.yml."""
+        data = await request.json()
+        langs = data.get("languages", "").strip()
+        if not langs:
+            return web.json_response({"status": "error", "message": "languages is required"}, status=400)
+        # Validate: must be comma-separated 2-3 letter language codes only
+        import re as _re
+        if not _re.match(r'^[a-z]{2,3}(,[a-z]{2,3})*$', langs):
+            return web.json_response({"status": "error", "message": "Invalid format. Use comma-separated language codes (e.g. en,ar,fa)"}, status=400)
+
+        compose_path = Path(CONFIG_PATH).parent / "docker-compose.yml"
+        if not compose_path.exists():
+            return web.json_response({"status": "error", "message": "docker-compose.yml not found"}, status=404)
+
+        import re
+        text = compose_path.read_text()
+        new_text = re.sub(
+            r"(LT_LOAD_ONLY=)[^\s#]+",
+            f"\\g<1>{langs}",
+            text,
+        )
+        if new_text == text:
+            return web.json_response({"status": "error", "message": "LT_LOAD_ONLY not found in docker-compose.yml"}, status=400)
+
+        compose_path.write_text(new_text)
+        logger.info("Updated LT_LOAD_ONLY to: %s", langs)
+
+        # Recreate the translate container with the new env var
+        try:
+            async with aiohttp.ClientSession(connector=aiohttp.UnixConnector(path="/var/run/docker.sock")) as docker:
+                # Get current container config for volumes/ports
+                async with docker.get("http://localhost/containers/translate/json") as resp:
+                    if resp.status != 200:
+                        return web.json_response({"status": "ok", "message": f"Languages saved to: {langs}. Could not auto-restart translate container — restart it manually."})
+                    old = await resp.json()
+
+                # Stop and remove old container
+                await docker.post("http://localhost/containers/translate/stop", timeout=aiohttp.ClientTimeout(total=30))
+                await docker.delete("http://localhost/containers/translate")
+                logger.info("Stopped and removed old translate container.")
+
+                # Recreate with updated env
+                old_env = old.get("Config", {}).get("Env", [])
+                new_env = [e for e in old_env if not e.startswith("LT_LOAD_ONLY=")]
+                new_env.append(f"LT_LOAD_ONLY={langs}")
+
+                container_config = {
+                    "Image": old.get("Config", {}).get("Image", "libretranslate/libretranslate:latest"),
+                    "Env": new_env,
+                    "ExposedPorts": old.get("Config", {}).get("ExposedPorts", {}),
+                    "HostConfig": {
+                        "Binds": old.get("HostConfig", {}).get("Binds", []),
+                        "PortBindings": old.get("HostConfig", {}).get("PortBindings", {}),
+                        "RestartPolicy": old.get("HostConfig", {}).get("RestartPolicy", {"Name": "unless-stopped"}),
+                    },
+                }
+                async with docker.post("http://localhost/containers/create?name=translate", json=container_config) as create_resp:
+                    if create_resp.status not in (200, 201):
+                        body = await create_resp.text()
+                        logger.error("Failed to recreate translate container: %s", body[:200])
+                        return web.json_response({"status": "ok", "message": f"Languages saved. Failed to auto-restart — restart translate container manually."})
+
+                await docker.post("http://localhost/containers/translate/start")
+                logger.info("Translate container recreated with LT_LOAD_ONLY=%s", langs)
+
+        except Exception as e:
+            logger.warning("Could not auto-restart translate container: %s", e)
+            return web.json_response({"status": "ok", "message": f"Languages saved to: {langs}. Could not auto-restart — restart translate container manually."})
+
+        return web.json_response({"status": "ok", "message": f"Languages updated to: {langs}. Translate container is restarting — language models will download shortly."})
+
+    # ── Test source messages ───────────────────────────────
+
+    async def api_test_source(request):
+        """Send a test message through the full pipeline (translate → filter → format → send)."""
+        import time
+        import random
+        data = await request.json()
+        msg_type = data.get("type", "telegram")
+
+        # Each test needs a unique source_id to avoid SQLite dedup
+        uid = f"test-{int(time.time())}-{random.randint(1000,9999)}"
+
+        test_messages = {
+            "telegram": {
+                "source": "telegram", "source_id": uid,
+                "author": "Test Channel", "url": "https://t.me/test/1",
+                "content": "TEST of Telegram delivery method. If you see this message, Telegram source processing and notification delivery are working correctly.",
+            },
+            "telegram_translation": {
+                "source": "telegram", "source_id": uid,
+                "author": "Test Channel", "url": "https://t.me/test/2",
+                "content": "TEST de la methode de livraison Telegram avec traduction. Ce message teste le pipeline de traduction automatique.",
+            },
+            "twitter": {
+                "source": "twitter", "source_id": uid,
+                "author": "@testaccount", "url": "https://x.com/testaccount/status/123",
+                "content": "TEST of Twitter/X delivery method. If you see this message, Twitter source processing and notification delivery are working correctly.",
+            },
+            "rss": {
+                "source": "rss", "source_id": uid,
+                "author": "Test RSS Feed", "url": "https://example.com/feed",
+                "content": "TEST of RSS feed delivery method. If you see this message, RSS source processing and notification delivery are working correctly.",
+            },
+            "radar_anomaly": {
+                "source": "radar", "source_id": uid,
+                "author": "Traffic Anomaly — Test",
+                "url": "https://radar.cloudflare.com/outage-center",
+                "content": "TEST of Radar anomaly delivery method. If you see this message, Cloudflare Radar source processing and notification delivery are working correctly.",
+            },
+            "radar_outage": {
+                "source": "radar", "source_id": uid,
+                "author": "Cloud Outage — Test",
+                "url": "https://radar.cloudflare.com/outage-center",
+                "content": "TEST of Radar outage delivery method. If you see this message, Cloudflare Radar outage monitoring and notification delivery are working correctly.",
+            },
+        }
+
+        msg_data = test_messages.get(msg_type, test_messages["telegram"])
+
+        from src.sources.base import Message
+        from datetime import datetime, timezone
+        msg = Message(
+            source=msg_data["source"],
+            source_id=msg_data["source_id"],
+            author=msg_data["author"],
+            content=msg_data["content"],
+            url=msg_data["url"],
+            timestamp=datetime.now(timezone.utc),
+        )
+
+        pipeline = app.get("pipeline")
+        if not pipeline:
+            return web.json_response({"status": "error", "message": "Pipeline not available"}, status=500)
+
+        try:
+            await pipeline.process(msg)
+            return web.json_response({"status": "ok", "message": f"Test {msg_type} message sent through pipeline"})
+        except Exception as e:
+            return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+    # ── Restart trigger ──────────────────────────────────────
+
+    async def api_restart(request):
+        cb = app["restart_callback"]
+        if cb:
+            cb()
+            return web.json_response({"status": "ok", "message": "Restart triggered."})
+        return web.json_response({"status": "error", "message": "Restart not available."}, status=501)
+
+    # ── Analytics ────────────────────────────────────────────
+
+    async def api_analytics(request):
+        db = app.get("db")
+        if not db:
+            return web.json_response({"error": "Database not available"}, status=500)
+        stats = await db.stats()
+        # Add health data
+        stats["health"] = health.summary()
+        return web.json_response(stats)
+
+    # ── Logs (last N lines) ──────────────────────────────────
+
+    async def api_messages_recent(request):
+        try:
+            limit = min(int(request.query.get("limit", "100")), 1000)
+        except (ValueError, TypeError):
+            limit = 100
+        source = request.query.get("source", None)
+        if source == "all":
+            source = None
+        db = app.get("db")
+        if not db:
+            return web.json_response({"messages": []})
+        messages = await db.get_recent(limit=limit, source=source)
+        return web.json_response({"messages": messages})
+
+    async def api_export(request):
+        """Export messages as JSON or CSV."""
+        import re as _re
+        fmt = request.query.get("format", "json")
+        if fmt not in ("json", "csv"):
+            fmt = "json"
+        source = request.query.get("source")
+        start = request.query.get("start")
+        end = request.query.get("end")
+        try:
+            limit = min(int(request.query.get("limit", "10000")), 50000)
+        except (ValueError, TypeError):
+            limit = 10000
+
+        # Validate date formats if provided
+        date_re = _re.compile(r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$")
+        if start and not date_re.match(start):
+            return web.json_response({"error": "Invalid start date format. Use YYYY-MM-DD."}, status=400)
+        if end and not date_re.match(end):
+            return web.json_response({"error": "Invalid end date format. Use YYYY-MM-DD."}, status=400)
+
+        db = app.get("db")
+        if not db:
+            return web.json_response({"error": "Database not available"}, status=500)
+
+        messages = await db.export(source=source, start=start, end=end, limit=limit)
+
+        if fmt == "csv":
+            import csv
+            import io
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=["source", "source_id", "author", "content", "url", "timestamp", "created_at"])
+            writer.writeheader()
+            writer.writerows(messages)
+            return web.Response(
+                body=output.getvalue(),
+                content_type="text/csv",
+                headers={"Content-Disposition": "attachment; filename=osint_export.csv"},
+            )
+
+        return web.json_response({"messages": messages, "count": len(messages)})
+
+    async def api_logs(request):
+        try:
+            n = min(int(request.query.get("lines", "100")), 1000)
+        except (ValueError, TypeError):
+            n = 100
+        log_file = Path("logs/osint_monitor.log")
+        if not log_file.exists():
+            return web.json_response({"lines": []})
+        if log_file.stat().st_size > 50 * 1024 * 1024:  # 50MB safety cap
+            return web.json_response({"lines": ["[Log file too large to display. Clear logs or check the file directly.]"]})
+        all_lines = log_file.read_text().splitlines()
+        return web.json_response({"lines": all_lines[-n:]})
+
+    async def api_logs_clear(request):
+        log_file = Path("logs/osint_monitor.log")
+        if log_file.exists():
+            log_file.write_text("")
+            logger.info("Logs cleared via dashboard")
+        return web.json_response({"status": "ok", "message": "Logs cleared"})
+
+    # ── Routes ───────────────────────────────────────────────
+
+    app.router.add_get("/", index)
+    app.router.add_get("/api/setup-status", api_setup_status)
+    app.router.add_get("/api/health", api_health)
+    app.router.add_get("/api/config", api_config_get)
+    app.router.add_put("/api/config", api_config_put)
+    app.router.add_post("/api/config/validate", api_config_validate)
+    app.router.add_get("/api/sources", api_sources_get)
+    app.router.add_put("/api/sources", api_sources_put)
+    app.router.add_get("/api/notifiers", api_notifiers_get)
+    app.router.add_put("/api/notifiers", api_notifiers_put)
+    app.router.add_get("/api/filters", api_filters_get)
+    app.router.add_put("/api/filters", api_filters_put)
+    app.router.add_get("/api/polling", api_polling_get)
+    app.router.add_put("/api/polling", api_polling_put)
+    app.router.add_get("/api/credentials", api_credentials_get)
+    app.router.add_put("/api/credentials", api_credentials_put)
+    app.router.add_post("/api/whatsapp/start", api_whatsapp_start)
+    app.router.add_get("/api/whatsapp/qr", api_whatsapp_qr)
+    app.router.add_get("/api/whatsapp/status", api_whatsapp_status)
+    app.router.add_post("/api/test-notification", api_test_notification)
+    app.router.add_get("/api/translate/status", api_translate_status)
+    app.router.add_post("/api/translate/configure", api_translate_configure)
+    app.router.add_post("/api/test-source", api_test_source)
+    app.router.add_post("/api/restart", api_restart)
+    app.router.add_get("/api/analytics", api_analytics)
+    app.router.add_get("/api/messages/recent", api_messages_recent)
+    app.router.add_get("/api/export", api_export)
+    app.router.add_get("/api/logs", api_logs)
+    app.router.add_post("/api/logs/clear", api_logs_clear)
+    app.router.add_static("/static/", static_dir)
+
+    # Telegram auth routes
+    add_telegram_auth_routes(app, telegram_auth)
+
+    return app

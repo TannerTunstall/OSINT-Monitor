@@ -1,0 +1,56 @@
+services:
+  osint-monitor:
+    build: .
+    container_name: osint-monitor
+    restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./.env:/app/.env
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./telegram_session:/app/session
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file: .env
+    ports:
+      - "8550:8550"
+
+  whatsapp-api:
+    image: devlikeapro/waha:${WAHA_TAG:-latest}
+    container_name: whatsapp-api
+    restart: "no"
+    volumes:
+      - ./whatsapp-data:/app/.sessions
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - WAHA_DEFAULT_SESSION=default
+      - WAHA_NO_API_KEY=True
+      - WAHA_DASHBOARD_NO_PASSWORD=True
+      - WHATSAPP_RESTART_ALL_SESSIONS=True
+
+  translate:
+    image: libretranslate/libretranslate:latest
+    container_name: translate
+    restart: unless-stopped
+    volumes:
+      - ./translate-data:/home/libretranslate/.local
+    environment:
+      - LT_LOAD_ONLY=en,ar,fa   # Change to your needed language pairs (e.g., en,ru,zh)
+      - LT_DISABLE_WEB_UI=true
+    ports:
+      - "127.0.0.1:5000:5000"
+
+  # Uncomment to use Signal instead of / alongside WhatsApp:
+  # signal-api:
+  #   image: bbernhard/signal-cli-rest-api:latest
+  #   container_name: signal-api
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ./signal-data:/home/.local/share/signal-cli
+  #   environment:
+  #     - MODE=native
+  #   ports:
+  #     - "127.0.0.1:8080:8080"

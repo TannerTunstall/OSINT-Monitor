@@ -1,0 +1,42 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Secrets and runtime config
+.env
+.env.bak
+config.yaml
+
+# Runtime data (Docker volumes)
+data/
+logs/
+*.log
+session/
+telegram_session/
+*.session
+*.session-journal
+signal-data/
+whatsapp-data/
+translate-data/
+
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python virtual environments
+venv/
+.venv/
+env/

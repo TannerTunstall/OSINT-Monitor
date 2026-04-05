@@ -1,0 +1,133 @@
+# ============================================================
+# OSINT Monitor Configuration
+# ============================================================
+# Copy this file to config.yaml and fill in your values.
+# Secrets use ${ENV_VAR} syntax — set them in .env
+# Comment out any source/notifier section you don't need.
+
+# ── DATA SOURCES ─────────────────────────────────────────────
+
+sources:
+  telegram:
+    api_id: ${TELEGRAM_API_ID}
+    api_hash: ${TELEGRAM_API_HASH}
+    session_name: "osint_monitor"
+    channels:
+      - "@example_channel"
+      # - "https://t.me/another_channel"
+      # - -1001234567890  # or use numeric channel IDs
+
+  twitter:
+    method: "nitter_rss"
+    nitter_instances:
+      - "https://nitter.privacydev.net"
+      - "https://nitter.poast.org"
+    accounts:
+      - "example_account"
+
+  # RSS/Atom feeds — monitor any RSS feed (status pages, news, blogs, etc.)
+  rss_feeds:
+    feeds:
+      - url: "https://status.aws.amazon.com/rss/all.rss"
+        label: "AWS Status"
+      # - url: "https://www.cloudflarestatus.com/history.atom"
+      #   label: "Cloudflare Status"
+      # - url: "https://status.cloud.google.com/feed.atom"
+      #   label: "GCP Status"
+      # Filter entries by content (optional):
+      # - url: "https://status.aws.amazon.com/rss/all.rss"
+      #   label: "AWS US-East"
+      #   content_filter:
+      #     - "us-east-1"
+
+  # Cloudflare Radar — traffic anomalies and cloud outages
+  # radar:
+  #   enabled: true
+  #   api_token: ${CLOUDFLARE_RADAR_TOKEN}
+  #   countries:
+  #     US: "United States"
+  #     GB: "United Kingdom"
+  #     DE: "Germany"
+  #     # Add any ISO 3166-1 alpha-2 country codes you want to monitor.
+  #     # Leave empty to monitor global cloud outages only.
+
+# ── DELIVERY ─────────────────────────────────────────────────
+# Enable one or more notifiers. Comment out what you don't use.
+
+notifiers:
+  whatsapp:
+    enabled: true
+    api_url: "http://whatsapp-api:3000"
+    session_name: "default"
+    chat_ids:
+      - "1234567890@c.us"           # individual: phone@c.us
+      # - "123456789-987654@g.us"   # group: id@g.us
+
+  # signal:
+  #   enabled: true
+  #   api_url: "http://signal-api:8080"
+  #   sender: ${SIGNAL_SENDER}
+  #   recipients:
+  #     - "+1987654321"
+
+  # discord:
+  #   enabled: true
+  #   webhook_urls:
+  #     - "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+
+  # slack:
+  #   enabled: true
+  #   webhook_urls:
+  #     - "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+
+  # email:
+  #   enabled: true
+  #   smtp_host: "smtp.gmail.com"
+  #   smtp_port: 587
+  #   use_tls: true
+  #   username: ${SMTP_USERNAME}
+  #   password: ${SMTP_PASSWORD}
+  #   from_address: "alerts@example.com"
+  #   to_addresses:
+  #     - "analyst@example.com"
+
+  # webhook:
+  #   enabled: true
+  #   urls:
+  #     - url: "https://your-endpoint.com/webhook"
+  #       method: "POST"
+  #       headers:
+  #         Authorization: "Bearer ${WEBHOOK_TOKEN}"
+
+# ── FILTERS (optional) ──────────────────────────────────────
+# If include_keywords is set, only matching messages are forwarded.
+# exclude_keywords always takes precedence.
+
+filters:
+  include_keywords: []
+    # - "outage"
+    # - "incident"
+  exclude_keywords: []
+    # - "scheduled maintenance"
+
+# ── POLLING INTERVALS ────────────────────────────────────────
+
+polling:
+  twitter_interval_seconds: 300     # 5 min
+  rss_feeds_interval_seconds: 120   # 2 min
+
+# ── TRANSLATION (optional) ──────────────────────────────────
+# Auto-translates non-target-language messages via LibreTranslate.
+# translation:
+#   enabled: true
+#   api_url: "http://translate:5000"
+#   target_language: "en"
+
+# ── STORAGE ──────────────────────────────────────────────────
+
+database:
+  path: "data/messages.db"
+  retention_days: 90
+
+logging:
+  level: "INFO"
