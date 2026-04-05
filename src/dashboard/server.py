@@ -510,10 +510,11 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
             text,
         )
         if new_text == text:
-            return web.json_response({"status": "error", "message": "LT_LOAD_ONLY not found in docker-compose.yml"}, status=400)
-
-        compose_path.write_text(new_text)
-        logger.info("Updated LT_LOAD_ONLY to: %s", langs)
+            # Same languages already configured — still proceed with container rebuild
+            logger.info("LT_LOAD_ONLY already set to %s — rebuilding container anyway", langs)
+        else:
+            compose_path.write_text(new_text)
+            logger.info("Updated LT_LOAD_ONLY to: %s", langs)
 
         # Recreate the translate container with the new env var
         try:
@@ -531,8 +532,9 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
 
                 # Recreate with updated env
                 old_env = old.get("Config", {}).get("Env", [])
-                new_env = [e for e in old_env if not e.startswith("LT_LOAD_ONLY=")]
+                new_env = [e for e in old_env if not e.startswith("LT_LOAD_ONLY=") and not e.startswith("LT_UPDATE_MODELS=")]
                 new_env.append(f"LT_LOAD_ONLY={langs}")
+                new_env.append("LT_UPDATE_MODELS=true")
 
                 container_config = {
                     "Image": old.get("Config", {}).get("Image", "libretranslate/libretranslate:latest"),

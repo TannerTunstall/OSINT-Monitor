@@ -821,56 +821,119 @@ async function loadDashboardFeed() {
 
 // ── LibreTranslate Management ────────────────────────────
 
+const LT_ALL_LANGUAGES = {
+  en:'English',ar:'Arabic',az:'Azerbaijani',bn:'Bengali',bg:'Bulgarian',
+  ca:'Catalan',zh:'Chinese',cs:'Czech',da:'Danish',nl:'Dutch',eo:'Esperanto',
+  et:'Estonian',fi:'Finnish',fr:'French',de:'German',el:'Greek',he:'Hebrew',
+  hi:'Hindi',hu:'Hungarian',id:'Indonesian',ga:'Irish',it:'Italian',
+  ja:'Japanese',ko:'Korean',lv:'Latvian',lt:'Lithuanian',ms:'Malay',
+  fa:'Persian',pl:'Polish',pt:'Portuguese',ro:'Romanian',ru:'Russian',
+  sk:'Slovak',sl:'Slovenian',es:'Spanish',sv:'Swedish',tl:'Tagalog',
+  th:'Thai',tr:'Turkish',uk:'Ukrainian',ur:'Urdu',vi:'Vietnamese',
+};
+
+let _loadedLangs = new Set();
+
+function renderLangPicker(configured) {
+  const el = document.getElementById('translate-lang-picker');
+  if (!el) return;
+  const selected = new Set(configured ? configured.split(',') : ['en']);
+  selected.add('en'); // English always included
+
+  el.innerHTML = Object.entries(LT_ALL_LANGUAGES).map(([code, name]) => {
+    const checked = selected.has(code) ? 'checked' : '';
+    const loaded = _loadedLangs.has(code);
+    const dot = loaded ? '<span style="color:var(--green);margin-left:2px">&#9679;</span>' : '';
+    const disabled = code === 'en' ? 'disabled' : '';
+    return `<label class="preset-label" style="min-width:140px">
+      <input type="checkbox" ${checked} ${disabled} value="${code}" onchange="updateLangSelection()"> ${esc(name)} (${code})${dot}
+    </label>`;
+  }).join('');
+}
+
+function updateLangSelection() {
+  // Visual only — actual save happens on Save & Rebuild click
+}
+
+function getSelectedLangs() {
+  const checks = document.querySelectorAll('#translate-lang-picker input[type="checkbox"]:checked');
+  return Array.from(checks).map(c => c.value).sort().join(',');
+}
+
 async function checkTranslateStatus() {
   const statusEl = document.getElementById('translate-status');
-  const langsEl = document.getElementById('translate-languages');
-  const inputEl = document.getElementById('translate-langs-input');
   statusEl.textContent = 'Checking...';
-  statusEl.style.color = 'var(--text2)';
-  langsEl.innerHTML = '';
 
   const r = await api('GET', 'translate/status');
   if (!r) { statusEl.innerHTML = '<span style="color:var(--red)">Failed to check</span>'; return; }
 
-  // Show configured languages in input
-  if (r.configured && inputEl && !inputEl.value) {
-    inputEl.value = r.configured;
-  }
+  // Render language picker with configured languages
+  renderLangPicker(r.configured || 'en');
 
   if (r.ok) {
-    statusEl.innerHTML = '<span style="color:var(--green)">Online</span>';
-    const langs = r.languages || [];
-    langsEl.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">' +
-      langs.map(l => {
-        const code = l.code || l;
-        const name = l.name || code;
-        const targets = (l.targets || []).filter(t => t !== code).join(', ');
-        return `<span class="tag" style="cursor:default"><strong>${code}</strong>&nbsp;${name}${targets ? ` &rarr; ${targets}` : ''}</span>`;
-      }).join('') + '</div>';
+    _loadedLangs = new Set((r.languages || []).map(l => l.code || l));
+    const count = _loadedLangs.size;
+    statusEl.innerHTML = `<span style="color:var(--green)">Online</span> — ${count} language${count !== 1 ? 's' : ''} loaded <span style="color:var(--green)">&#9679;</span>`;
+    // Re-render to show green dots
+    renderLangPicker(r.configured || Array.from(_loadedLangs).join(','));
   } else {
-    statusEl.innerHTML = `<span style="color:var(--red)">Offline</span> — ${r.error || 'Unreachable'}`;
-    if (r.error && r.error.includes('Cannot connect')) {
-      statusEl.innerHTML += '<br><span style="color:var(--text2);font-size:11px">LibreTranslate may still be downloading language models. This can take several minutes on first start.</span>';
+    statusEl.innerHTML = `<span style="color:var(--red)">Offline</span> — ${esc(r.error || 'Unreachable')}`;
+    if (r.error && (r.error.includes('Cannot connect') || r.error.includes('Connect call failed'))) {
+      statusEl.innerHTML += '<br><span style="font-size:11px">LibreTranslate may still be downloading language models. This can take several minutes on first start.</span>';
     }
   }
 }
 
-async function saveTranslateLanguages() {
-  const input = document.getElementById('translate-langs-input');
-  const langs = input.value.trim();
-  if (!langs) { toast('Enter language codes (e.g. en,ar,fa)', 'error'); return; }
+let _translatePollInterval = null;
 
-  // Validate format
-  if (!/^[a-z]{2}(,[a-z]{2})*$/.test(langs)) {
-    toast('Use comma-separated 2-letter codes (e.g. en,ar,fa,ru)', 'error');
-    return;
-  }
+async function saveTranslateLanguages() {
+  const langs = getSelectedLangs();
+  if (!langs) { toast('Select at least one language', 'error'); return; }
+
+  if (!confirm(`Rebuild translation service with: ${langs}?\n\nThis will restart the translate container and download any new language models.`)) return;
+
+  const statusEl = document.getElementById('translate-status');
+  statusEl.innerHTML = '<span style="color:var(--orange)">Rebuilding...</span> — Stopping old container...';
 
   const r = await api('POST', 'translate/configure', { languages: langs });
   if (r && r.status === 'ok') {
     toast(r.message);
+    const requested = new Set(langs.split(','));
+    statusEl.innerHTML = `<span style="color:var(--orange)">Rebuilding...</span> — Container restarting, downloading ${requested.size} language model${requested.size > 1 ? 's' : ''}...`;
+
+    // Poll until all requested languages are loaded
+    let attempts = 0;
+    if (_translatePollInterval) clearInterval(_translatePollInterval);
+    _translatePollInterval = setInterval(async () => {
+      attempts++;
+      const s = await api('GET', 'translate/status');
+      if (s && s.ok) {
+        const loaded = new Set((s.languages || []).map(l => l.code));
+        const pending = [...requested].filter(l => !loaded.has(l));
+        if (pending.length === 0) {
+          clearInterval(_translatePollInterval);
+          _translatePollInterval = null;
+          statusEl.innerHTML = `<span style="color:var(--green)">Online</span> — All ${loaded.size} languages loaded`;
+          _loadedLangs = loaded;
+          renderLangPicker(langs);
+          toast('All languages loaded!');
+        } else {
+          statusEl.innerHTML = `<span style="color:var(--orange)">Loading...</span> — ${loaded.size}/${requested.size} languages ready, waiting for: ${pending.join(', ')}`;
+          _loadedLangs = loaded;
+          renderLangPicker(langs);
+        }
+      } else {
+        statusEl.innerHTML = `<span style="color:var(--orange)">Starting...</span> — Translate service not ready yet (${attempts * 5}s)`;
+      }
+      if (attempts > 60) { // 5 min timeout
+        clearInterval(_translatePollInterval);
+        _translatePollInterval = null;
+        statusEl.innerHTML = '<span style="color:var(--red)">Timeout</span> — Language download is taking longer than expected. Check Logs tab for details.';
+      }
+    }, 5000);
   } else {
     toast(r?.message || 'Failed to save', 'error');
+    statusEl.innerHTML = `<span style="color:var(--red)">Error</span> — ${esc(r?.message || 'Failed to rebuild')}`;
   }
 }
 

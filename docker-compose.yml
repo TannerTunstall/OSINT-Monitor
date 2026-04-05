@@ -13,6 +13,7 @@ services:
       - ./logs:/app/logs
       - ./telegram_session:/app/session
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-compose.yml:/app/docker-compose.yml
     env_file: .env
     ports:
       - "8550:8550"
@@ -38,7 +39,8 @@ services:
     volumes:
       - ./translate-data:/home/libretranslate/.local
     environment:
-      - LT_LOAD_ONLY=en,ar,fa   # Change to your needed language pairs (e.g., en,ru,zh)
+      - LT_LOAD_ONLY=ar,en,fa,fr   # Change to your needed language pairs (e.g., en,ru,zh)
+      - LT_UPDATE_MODELS=true
       - LT_DISABLE_WEB_UI=true
     ports:
       - "127.0.0.1:5000:5000"
