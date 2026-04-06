@@ -292,6 +292,37 @@ OSINT Monitor uses [LibreTranslate](https://github.com/LibreTranslate/LibreTrans
 - **Seed on startup** — Existing messages recorded without triggering alerts.
 - **Log rotation** — 10MB per file, 5 backups.
 
+## System Requirements
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| **RAM** | 2 GB | 4 GB |
+| **Disk** | 10 GB | 15 GB |
+| **CPU** | 1 core | 2 cores |
+
+### What uses what
+
+| Service | RAM | Disk (image) | Notes |
+|---------|-----|-------------|-------|
+| OSINT Monitor | ~100 MB | ~400 MB | The application itself — very lightweight |
+| WhatsApp (WAHA) | ~650 MB | ~1.5 GB | Bundles Chromium for WhatsApp Web protocol |
+| LibreTranslate | ~1.3 GB+ | ~3-4 GB+ | Depends on number of loaded languages |
+| Signal | ~15 MB | ~500 MB | Java runtime + signal-cli |
+
+### Translation language scaling
+
+LibreTranslate downloads a model for each language. Each model is ~200-500 MB on disk and adds ~200-400 MB of RAM.
+
+| Languages loaded | Approx disk | Approx RAM |
+|-----------------|-------------|------------|
+| 2 (e.g., en, ar) | ~3.5 GB | ~1 GB |
+| 4 (e.g., en, ar, fa, fr) | ~4.5 GB | ~1.3 GB |
+| 8+ | ~6 GB+ | ~2 GB+ |
+
+### Data retention
+
+Message data is negligible. In production testing with multiple Telegram channels, Twitter accounts, RSS feeds, and Cloudflare Radar over 6 days, the SQLite database was under 2 MB. At 90-day retention, expect 30-50 MB even with heavy use. Disk requirements are almost entirely Docker images.
+
 ## Architecture
 
 | Component | Description |
