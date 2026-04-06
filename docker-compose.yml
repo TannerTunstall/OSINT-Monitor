@@ -1,6 +1,9 @@
 services:
   osint-monitor:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     container_name: osint-monitor
     restart: unless-stopped
     dns:

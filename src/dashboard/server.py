@@ -738,6 +738,173 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
         all_lines = log_file.read_text().splitlines()
         return web.json_response({"lines": all_lines[-n:]})
 
+    # ── Update Check & Apply ──────────────────────────────────
+
+    GITHUB_REPO = "TannerTunstall/OSINT-Monitor"
+    _update_state = {"in_progress": False}
+
+    async def api_update_check(request):
+        """Check if a newer version is available on GitHub."""
+        version_file = Path("VERSION")
+        local_commit = version_file.read_text().strip() if version_file.exists() else "unknown"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
+                async with session.get(url, headers={"Accept": "application/vnd.github.v3+json"},
+                                       timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        return web.json_response({"error": "Cannot reach GitHub API"}, status=502)
+                    data = await resp.json()
+                    remote_commit = data.get("sha", "")
+                    remote_message = data.get("commit", {}).get("message", "").split("\n")[0]
+                    remote_date = data.get("commit", {}).get("committer", {}).get("date", "")
+
+                    up_to_date = local_commit != "unknown" and remote_commit == local_commit
+                    return web.json_response({
+                        "local_commit": local_commit[:12] if local_commit != "unknown" else "unknown",
+                        "remote_commit": remote_commit[:12],
+                        "remote_message": remote_message,
+                        "remote_date": remote_date,
+                        "up_to_date": up_to_date,
+                    })
+        except Exception as exc:
+            logger.warning("Update check failed: %s", exc)
+            return web.json_response({"error": str(exc)}, status=502)
+
+    def _get_host_project_path(container_data: dict) -> str | None:
+        """Extract host project path from container bind mounts."""
+        for mount in container_data.get("Mounts", []):
+            if mount.get("Destination") == "/app/config.yaml":
+                host_path = mount["Source"]
+                # macOS Docker Desktop may prefix with /host_mnt
+                if host_path.startswith("/host_mnt/"):
+                    host_path = host_path[len("/host_mnt"):]
+                return str(Path(host_path).parent)
+        return None
+
+    async def _create_and_run_container(docker, name: str, config: dict, timeout: int = 120) -> tuple[int, str]:
+        """Create, start, wait for a container. Returns (exit_code, logs)."""
+        # Clean up any existing container with this name
+        await docker.delete(f"http://localhost/containers/{name}?force=true")
+        await asyncio.sleep(0.5)
+
+        # Create
+        async with docker.post(f"http://localhost/containers/create?name={name}", json=config) as resp:
+            if resp.status != 201:
+                body = await resp.text()
+                raise RuntimeError(f"Cannot create {name}: {body}")
+
+        # Start
+        async with docker.post(f"http://localhost/containers/{name}/start") as resp:
+            if resp.status not in (204, 304):
+                raise RuntimeError(f"Cannot start {name}")
+
+        # Wait
+        async with docker.post(f"http://localhost/containers/{name}/wait",
+                               timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+            result = await resp.json()
+            exit_code = result.get("StatusCode", -1)
+
+        # Get logs
+        async with docker.get(f"http://localhost/containers/{name}/logs?stdout=true&stderr=true") as resp:
+            logs = await resp.text()
+
+        # Cleanup
+        await docker.delete(f"http://localhost/containers/{name}?force=true")
+
+        return exit_code, logs
+
+    async def api_update_apply(request):
+        """Pull latest code from GitHub and rebuild the container."""
+        if _update_state["in_progress"]:
+            return web.json_response({"error": "Update already in progress"}, status=409)
+        _update_state["in_progress"] = True
+
+        try:
+            async with aiohttp.ClientSession(connector=aiohttp.UnixConnector(path="/var/run/docker.sock")) as docker:
+                # Find host project path
+                async with docker.get("http://localhost/containers/osint-monitor/json") as resp:
+                    if resp.status != 200:
+                        return web.json_response({"error": "Cannot inspect container"}, status=500)
+                    host_path = _get_host_project_path(await resp.json())
+
+                if not host_path:
+                    return web.json_response({"error": "Cannot determine host project path"}, status=500)
+
+                logger.info("Update: host path = %s", host_path)
+
+                # Phase 1: Git pull via alpine/git
+                logger.info("Update: pulling latest code...")
+                exit_code, logs = await _create_and_run_container(docker, "osint-updater", {
+                    "Image": "alpine/git",
+                    "Cmd": ["sh", "-c", "git fetch origin main && git reset --hard origin/main && git rev-parse HEAD"],
+                    "WorkingDir": "/repo",
+                    "HostConfig": {"Binds": [f"{host_path}:/repo"]},
+                })
+
+                if exit_code != 0:
+                    _update_state["in_progress"] = False
+                    return web.json_response({"error": f"Git pull failed: {logs[-500:]}"}, status=500)
+
+                # Extract new commit hash from last line of logs
+                new_commit = logs.strip().split("\n")[-1].strip()
+                if len(new_commit) != 40:
+                    new_commit = "unknown"
+                logger.info("Update: pulled to commit %s", new_commit[:12])
+
+                # Phase 2: Rebuild via docker:cli
+                logger.info("Update: creating rebuild container...")
+                rebuild_config = {
+                    "Image": "docker:cli",
+                    "Cmd": ["sh", "-c",
+                            f"docker compose -f /repo/docker-compose.yml up -d --build osint-monitor"],
+                    "WorkingDir": "/repo",
+                    "Env": [f"GIT_COMMIT={new_commit}"],
+                    "HostConfig": {
+                        "Binds": [
+                            f"{host_path}:/repo",
+                            "/var/run/docker.sock:/var/run/docker.sock",
+                        ],
+                    },
+                }
+
+                # Clean up and create rebuilder (but don't start yet)
+                await docker.delete("http://localhost/containers/osint-rebuilder?force=true")
+                await asyncio.sleep(0.5)
+                async with docker.post("http://localhost/containers/create?name=osint-rebuilder",
+                                       json=rebuild_config) as resp:
+                    if resp.status != 201:
+                        body = await resp.text()
+                        _update_state["in_progress"] = False
+                        return web.json_response({"error": f"Cannot create rebuilder: {body}"}, status=500)
+
+                # Schedule rebuilder start AFTER response is sent
+                async def _start_rebuilder():
+                    await asyncio.sleep(1)  # Let HTTP response flush
+                    try:
+                        async with aiohttp.ClientSession(
+                            connector=aiohttp.UnixConnector(path="/var/run/docker.sock")
+                        ) as d:
+                            await d.post("http://localhost/containers/osint-rebuilder/start")
+                            logger.info("Update: rebuilder started — this container will be replaced")
+                    except Exception:
+                        logger.exception("Update: failed to start rebuilder")
+
+                asyncio.create_task(_start_rebuilder())
+
+                return web.json_response({
+                    "status": "updating",
+                    "message": "Code pulled. Rebuilding container...",
+                    "new_commit": new_commit[:12],
+                })
+
+        except Exception as exc:
+            logger.exception("Update failed")
+            return web.json_response({"error": str(exc)}, status=500)
+        finally:
+            _update_state["in_progress"] = False
+
     async def api_logs_clear(request):
         log_file = Path("logs/osint_monitor.log")
         if log_file.exists():
@@ -776,6 +943,8 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
     app.router.add_get("/api/export", api_export)
     app.router.add_get("/api/logs", api_logs)
     app.router.add_post("/api/logs/clear", api_logs_clear)
+    app.router.add_get("/api/update/check", api_update_check)
+    app.router.add_post("/api/update/apply", api_update_apply)
     app.router.add_static("/static/", static_dir)
 
     # Telegram auth routes
