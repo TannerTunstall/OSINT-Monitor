@@ -284,6 +284,34 @@ textarea {
 
 .add-row input { flex: 1; }
 
+/* ── Autocomplete ────────────────────────────────────── */
+
+.autocomplete-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.autocomplete-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.autocomplete-item:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* ── Buttons ─────────────────────────────────────────── */
 
 .btn {

@@ -361,12 +361,70 @@ function gatherRadar() {
   };
 }
 
-function addRadarCountry() {
+const COUNTRIES = [
+  "AF:Afghanistan","AL:Albania","DZ:Algeria","AO:Angola","AR:Argentina","AM:Armenia",
+  "AU:Australia","AT:Austria","AZ:Azerbaijan","BH:Bahrain","BD:Bangladesh","BY:Belarus",
+  "BE:Belgium","BA:Bosnia and Herzegovina","BR:Brazil","BG:Bulgaria","KH:Cambodia",
+  "CM:Cameroon","CA:Canada","CF:Central African Republic","TD:Chad","CL:Chile","CN:China",
+  "CO:Colombia","CD:DR Congo","HR:Croatia","CU:Cuba","CY:Cyprus","CZ:Czech Republic",
+  "DK:Denmark","DJ:Djibouti","EG:Egypt","ER:Eritrea","EE:Estonia","ET:Ethiopia",
+  "FI:Finland","FR:France","GE:Georgia","DE:Germany","GH:Ghana","GR:Greece",
+  "HN:Honduras","HK:Hong Kong","HU:Hungary","IN:India","ID:Indonesia","IR:Iran",
+  "IQ:Iraq","IE:Ireland","IL:Israel","IT:Italy","JP:Japan","JO:Jordan","KZ:Kazakhstan",
+  "KE:Kenya","KW:Kuwait","KG:Kyrgyzstan","LA:Laos","LV:Latvia","LB:Lebanon","LY:Libya",
+  "LT:Lithuania","MG:Madagascar","MY:Malaysia","ML:Mali","MX:Mexico","MD:Moldova",
+  "MN:Mongolia","MA:Morocco","MZ:Mozambique","MM:Myanmar","NA:Namibia","NP:Nepal",
+  "NL:Netherlands","NZ:New Zealand","NE:Niger","NG:Nigeria","KP:North Korea","NO:Norway",
+  "OM:Oman","PK:Pakistan","PS:Palestine","PA:Panama","PH:Philippines","PL:Poland",
+  "PT:Portugal","QA:Qatar","RO:Romania","RU:Russia","RW:Rwanda","SA:Saudi Arabia",
+  "SN:Senegal","RS:Serbia","SG:Singapore","SK:Slovakia","SI:Slovenia","SO:Somalia",
+  "ZA:South Africa","KR:South Korea","ES:Spain","SD:Sudan","SE:Sweden","CH:Switzerland",
+  "SY:Syria","TW:Taiwan","TJ:Tajikistan","TZ:Tanzania","TH:Thailand","TN:Tunisia",
+  "TR:Turkey","TM:Turkmenistan","UA:Ukraine","AE:United Arab Emirates","GB:United Kingdom",
+  "US:United States","UZ:Uzbekistan","VE:Venezuela","VN:Vietnam","YE:Yemen","ZM:Zambia",
+  "ZW:Zimbabwe"
+];
+
+function filterRadarCountries() {
   const input = document.getElementById('radar-country-input');
-  const val = input.value.trim();
-  if (!val || !val.includes(':')) { toast('Format: US:United States', 'error'); return; }
-  addTag('radar-countries', 'radar-country-input');
+  const dropdown = document.getElementById('radar-country-dropdown');
+  const query = input.value.toLowerCase().trim();
+  const existing = getTags('radar-countries');
+
+  const matches = COUNTRIES.filter(c => {
+    const name = c.split(':')[1].toLowerCase();
+    const code = c.split(':')[0].toLowerCase();
+    return (name.includes(query) || code.includes(query)) && !existing.includes(c);
+  }).slice(0, 8);
+
+  if (!matches.length || !query) {
+    dropdown.classList.add('hidden');
+    return;
+  }
+
+  dropdown.innerHTML = matches.map(c => {
+    const [code, name] = c.split(':');
+    return `<div class="autocomplete-item" onmousedown="selectRadarCountry('${c}')">${esc(name)} <span style="color:var(--text2)">(${esc(code)})</span></div>`;
+  }).join('');
+  dropdown.classList.remove('hidden');
 }
+
+function selectRadarCountry(value) {
+  const input = document.getElementById('radar-country-input');
+  const dropdown = document.getElementById('radar-country-dropdown');
+  input.value = value;
+  addTag('radar-countries', 'radar-country-input');
+  input.value = '';
+  dropdown.classList.add('hidden');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#radar-country-input') && !e.target.closest('#radar-country-dropdown')) {
+    const dd = document.getElementById('radar-country-dropdown');
+    if (dd) dd.classList.add('hidden');
+  }
+});
 
 function renderWebhookEndpoints(endpoints) {
   const el = document.getElementById('webhook-endpoints');
