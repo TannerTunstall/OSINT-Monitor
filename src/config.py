@@ -325,7 +325,7 @@ def _parse_telegram(raw: dict) -> TelegramSourceConfig:
 def _parse_twitter(raw: dict) -> TwitterSourceConfig:
     return TwitterSourceConfig(
         method=raw.get("method", "nitter_rss"),
-        nitter_instances=raw.get("nitter_instances", []),
+        nitter_instances=raw.get("nitter_instances", ["https://nitter.net/"]),
         accounts=raw.get("accounts", []),
     )
 
