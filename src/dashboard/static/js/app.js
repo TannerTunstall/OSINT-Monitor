@@ -68,7 +68,9 @@ async function loadConfig() {
   // Twitter
   if (src.twitter) {
     renderTags('tw-accounts', src.twitter.accounts || []);
-    renderTags('tw-nitter', src.twitter.nitter_instances || []);
+    renderTags('tw-nitter', src.twitter.nitter_instances || ['https://nitter.net/']);
+  } else {
+    renderTags('tw-nitter', ['https://nitter.net/']);
   }
 
   // RSS feeds (accept both keys)
