@@ -394,10 +394,10 @@ function filterRadarCountries() {
   const matches = COUNTRIES.filter(c => {
     const name = c.split(':')[1].toLowerCase();
     const code = c.split(':')[0].toLowerCase();
-    return (name.includes(query) || code.includes(query)) && !existing.includes(c);
-  }).slice(0, 8);
+    return (!query || name.includes(query) || code.includes(query)) && !existing.includes(c);
+  }).slice(0, 10);
 
-  if (!matches.length || !query) {
+  if (!matches.length) {
     dropdown.classList.add('hidden');
     return;
   }
