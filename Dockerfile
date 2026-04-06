@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ src/
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
+ARG GIT_COMMIT=unknown
+RUN echo "${GIT_COMMIT}" > /app/VERSION
+
 RUN mkdir -p data logs session && \
     chown -R appuser:appuser /app && \
     chmod +x /app/docker-entrypoint.sh

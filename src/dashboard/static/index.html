@@ -477,6 +477,33 @@
   </div>
 </div>
 
+<!-- Update Modal -->
+<div class="wizard-overlay hidden" id="update-modal" style="flex-direction:column;gap:16px">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:400px;width:100%">
+    <h2 style="font-size:18px;margin-bottom:20px;text-align:center">Updating OSINT Monitor</h2>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="update-step pending" id="step-pull">
+        <span class="step-icon">&bull;</span>
+        <span>Pulling latest code from GitHub</span>
+      </div>
+      <div class="update-step pending" id="step-build">
+        <span class="step-icon">&bull;</span>
+        <span>Rebuilding container</span>
+      </div>
+      <div class="update-step pending" id="step-restart">
+        <span class="step-icon">&bull;</span>
+        <span>Restarting</span>
+      </div>
+      <div class="update-step pending" id="step-done">
+        <span class="step-icon">&bull;</span>
+        <span>Update complete — reloading</span>
+      </div>
+    </div>
+    <div class="hidden" id="update-error" style="margin-top:16px;padding:10px;background:rgba(239,68,68,0.1);border-radius:6px;color:#ef4444;font-size:13px"></div>
+    <p style="color:var(--text2);font-size:11px;margin-top:16px;text-align:center">Your config and data are preserved.</p>
+  </div>
+</div>
+
 <script src="/static/js/api.js"></script>
 <script src="/static/js/app.js"></script>
 </body>

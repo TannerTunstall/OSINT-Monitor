@@ -315,6 +315,114 @@ function exportData(format) {
   toast(`Exporting as ${format.toUpperCase()}...`);
 }
 
+// ── Updates ─────────────────────────────────────────────
+
+async function checkForUpdates() {
+  const statusEl = document.getElementById('update-status');
+  const btn = document.getElementById('update-check-btn');
+  if (!statusEl) return;
+  btn.disabled = true;
+  btn.textContent = 'Checking...';
+  statusEl.innerHTML = '';
+
+  const data = await api('GET', 'update/check');
+  btn.disabled = false;
+  btn.textContent = 'Check for updates';
+
+  if (!data || data.error) {
+    statusEl.innerHTML = `<span style="color:var(--red,#ef4444);font-size:12px">${esc(data?.error || 'Cannot reach GitHub')}</span>`;
+    return;
+  }
+
+  if (data.up_to_date) {
+    statusEl.innerHTML = `<span style="color:var(--green,#22c55e);font-size:12px">Up to date (${esc(data.local_commit)})</span>`;
+  } else {
+    statusEl.innerHTML = `
+      <div style="font-size:12px;margin-bottom:6px">
+        <span style="color:var(--warning,#f59e0b)">Update available</span>
+        <span style="color:var(--text2)"> — ${esc(data.remote_commit)}: ${esc(data.remote_message)}</span>
+      </div>
+      <button class="btn btn-sm" style="background:var(--accent);color:#fff;width:100%" onclick="applyUpdate()">Update &amp; Restart</button>
+    `;
+  }
+}
+
+async function applyUpdate() {
+  if (!confirm('This will pull the latest code from GitHub, rebuild the container, and restart. Your config and data are preserved. Continue?')) return;
+
+  // Show update modal
+  const modal = document.getElementById('update-modal');
+  modal.classList.remove('hidden');
+  updateStep('step-pull', 'active');
+  updateStep('step-build', 'pending');
+  updateStep('step-restart', 'pending');
+  updateStep('step-done', 'pending');
+  document.getElementById('update-error').classList.add('hidden');
+
+  const data = await api('POST', 'update/apply');
+  if (!data || data.error) {
+    updateStep('step-pull', 'error');
+    const errEl = document.getElementById('update-error');
+    errEl.textContent = data?.error || 'Update failed';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  // Pull succeeded, now rebuilding
+  updateStep('step-pull', 'done');
+  updateStep('step-build', 'active');
+
+  // Poll for the container to come back with new version
+  const startTime = Date.now();
+  const maxWait = 300000; // 5 minutes
+  let buildShown = false;
+
+  const poll = setInterval(async () => {
+    if (Date.now() - startTime > maxWait) {
+      clearInterval(poll);
+      updateStep('step-build', 'error');
+      const errEl = document.getElementById('update-error');
+      errEl.textContent = 'Update is taking longer than expected. Check Docker logs on the host.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      const resp = await fetch('/api/health');
+      if (resp.ok) {
+        if (!buildShown) {
+          updateStep('step-build', 'done');
+          updateStep('step-restart', 'active');
+          buildShown = true;
+        }
+        // App is back — wait a moment then mark done
+        clearInterval(poll);
+        updateStep('step-restart', 'done');
+        updateStep('step-done', 'done');
+        setTimeout(() => location.reload(), 3000);
+      }
+    } catch (e) {
+      // Connection refused = container is restarting, expected
+      if (!buildShown && Date.now() - startTime > 10000) {
+        updateStep('step-build', 'done');
+        updateStep('step-restart', 'active');
+        buildShown = true;
+      }
+    }
+  }, 3000);
+}
+
+function updateStep(id, state) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const icon = el.querySelector('.step-icon');
+  el.className = 'update-step ' + state;
+  if (state === 'active') icon.innerHTML = '<div class="spinner-sm"></div>';
+  else if (state === 'done') icon.textContent = '\u2713';
+  else if (state === 'error') icon.textContent = '\u2717';
+  else icon.textContent = '\u2022';
+}
+
 // ── Gather & Save ───────────────────────────────────────
 
 function gatherSources() {
@@ -849,6 +957,13 @@ async function loadAnalytics() {
         <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:8px;margin-top:4px">
           <button class="btn btn-sm btn-outline" onclick="exportData('csv')" style="flex:1">Export CSV</button>
           <button class="btn btn-sm btn-outline" onclick="exportData('json')" style="flex:1;margin-left:6px">Export JSON</button>
+        </div>
+        <div id="update-section" style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:var(--text2)">Updates</span>
+            <button class="btn btn-sm btn-outline" onclick="checkForUpdates()" id="update-check-btn">Check for updates</button>
+          </div>
+          <div id="update-status" style="margin-top:6px"></div>
         </div>
       </div>
     `;
