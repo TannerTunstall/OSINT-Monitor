@@ -258,6 +258,10 @@ class Pipeline:
         content = _clean_html(msg.content) if msg.content else ""
         translation = await self._translate(content)
 
+        # Store translation immediately — always available in exports for data collection
+        if translation:
+            await self.db.update_enrichment(msg.source, msg.source_id, translation, None)
+
         # Step 2: Filter against ENGLISH text (translated or original)
         filter_text = translation or content
         passes, matched_keywords = self._check_keywords(msg.source, filter_text, msg.source_id)
@@ -268,9 +272,9 @@ class Pipeline:
         if not msg.source_id.startswith("test-") and self._is_duplicate_content(filter_text, msg.source_id, msg.author or "unknown"):
             return
 
-        # Store enrichment data (translation + matched keywords) in DB
-        if translation or matched_keywords:
-            kw_str = ", ".join(matched_keywords) if matched_keywords else None
+        # Store matched keywords alongside translation
+        if matched_keywords:
+            kw_str = ", ".join(matched_keywords)
             await self.db.update_enrichment(msg.source, msg.source_id, translation, kw_str)
 
         # Step 4: Format and send
