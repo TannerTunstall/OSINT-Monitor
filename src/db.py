@@ -13,12 +13,19 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT,
     url TEXT,
     timestamp DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    translation TEXT,
+    matched_keywords TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 """
+
+MIGRATE_COLUMNS = [
+    ("translation", "TEXT"),
+    ("matched_keywords", "TEXT"),
+]
 
 
 class MessageDB:
@@ -30,6 +37,12 @@ class MessageDB:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
         await self._db.executescript(SCHEMA)
+        # Migrate existing databases: add new columns if missing
+        cursor = await self._db.execute("PRAGMA table_info(messages)")
+        existing = {row[1] for row in await cursor.fetchall()}
+        for col_name, col_type in MIGRATE_COLUMNS:
+            if col_name not in existing:
+                await self._db.execute(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}")
         await self._db.commit()
 
     async def close(self):
@@ -44,31 +57,42 @@ class MessageDB:
         content: str | None = None,
         url: str | None = None,
         timestamp: datetime | None = None,
+        translation: str | None = None,
+        matched_keywords: str | None = None,
     ) -> bool:
         """Insert a message if it doesn't already exist. Returns True if inserted (new)."""
         msg_id = f"{source}:{source_id}"
         try:
             await self._db.execute(
-                "INSERT INTO messages (id, source, source_id, author, content, url, timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (msg_id, source, source_id, author, content, url, timestamp),
+                "INSERT INTO messages (id, source, source_id, author, content, url, timestamp, translation, matched_keywords) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (msg_id, source, source_id, author, content, url, timestamp, translation, matched_keywords),
             )
             await self._db.commit()
             return True
         except aiosqlite.IntegrityError:
             return False
 
+    async def update_enrichment(self, source: str, source_id: str, translation: str | None, matched_keywords: str | None):
+        """Update translation and matched_keywords after processing."""
+        msg_id = f"{source}:{source_id}"
+        await self._db.execute(
+            "UPDATE messages SET translation = ?, matched_keywords = ? WHERE id = ?",
+            (translation, matched_keywords, msg_id),
+        )
+        await self._db.commit()
+
     async def get_recent(self, limit: int = 100, source: str | None = None) -> list[dict]:
         """Get recent messages from the cache, optionally filtered by source."""
         if source:
             cursor = await self._db.execute(
-                "SELECT source, source_id, author, content, url, timestamp, created_at "
+                "SELECT source, source_id, author, content, url, timestamp, created_at, translation, matched_keywords "
                 "FROM messages WHERE source = ? ORDER BY created_at DESC LIMIT ?",
                 (source, limit),
             )
         else:
             cursor = await self._db.execute(
-                "SELECT source, source_id, author, content, url, timestamp, created_at "
+                "SELECT source, source_id, author, content, url, timestamp, created_at, translation, matched_keywords "
                 "FROM messages ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             )
@@ -77,6 +101,7 @@ class MessageDB:
             {
                 "source": r[0], "source_id": r[1], "author": r[2],
                 "content": r[3], "url": r[4], "timestamp": r[5], "created_at": r[6],
+                "translation": r[7], "matched_keywords": r[8],
             }
             for r in rows
         ]
@@ -105,7 +130,7 @@ class MessageDB:
         params.append(limit)
 
         cursor = await self._db.execute(
-            f"SELECT source, source_id, author, content, url, timestamp, created_at "
+            f"SELECT source, source_id, author, content, url, timestamp, created_at, translation, matched_keywords "
             f"FROM messages{where} ORDER BY created_at DESC LIMIT ?",
             params,
         )
@@ -114,6 +139,7 @@ class MessageDB:
             {
                 "source": r[0], "source_id": r[1], "author": r[2],
                 "content": r[3], "url": r[4], "timestamp": r[5], "created_at": r[6],
+                "translation": r[7], "matched_keywords": r[8],
             }
             for r in rows
         ]

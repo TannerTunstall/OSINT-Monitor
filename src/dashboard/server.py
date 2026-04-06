@@ -674,6 +674,8 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
         if fmt not in ("json", "csv"):
             fmt = "json"
         source = request.query.get("source")
+        if source == "all":
+            source = None
         start = request.query.get("start")
         end = request.query.get("end")
         try:
@@ -698,7 +700,7 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
             import csv
             import io
             output = io.StringIO()
-            writer = csv.DictWriter(output, fieldnames=["source", "source_id", "author", "content", "url", "timestamp", "created_at"])
+            writer = csv.DictWriter(output, fieldnames=["source", "source_id", "author", "content", "translation", "matched_keywords", "url", "timestamp", "created_at"])
             writer.writeheader()
             writer.writerows(messages)
             return web.Response(
