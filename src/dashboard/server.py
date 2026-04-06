@@ -783,8 +783,28 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
                 return str(Path(host_path).parent)
         return None
 
+    async def _ensure_image(docker, image: str):
+        """Pull an image if it doesn't exist locally."""
+        async with docker.get(f"http://localhost/images/{image}/json") as resp:
+            if resp.status == 200:
+                return  # Already exists
+        logger.info("Pulling image %s...", image)
+        async with docker.post(
+            f"http://localhost/images/create?fromImage={image.split(':')[0]}&tag={image.split(':')[-1] if ':' in image else 'latest'}",
+            timeout=aiohttp.ClientTimeout(total=300),
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Cannot pull {image}: {body}")
+            # Consume the stream to completion
+            async for _ in resp.content:
+                pass
+
     async def _create_and_run_container(docker, name: str, config: dict, timeout: int = 120) -> tuple[int, str]:
         """Create, start, wait for a container. Returns (exit_code, logs)."""
+        # Ensure image exists
+        await _ensure_image(docker, config["Image"])
+
         # Clean up any existing container with this name
         await docker.delete(f"http://localhost/containers/{name}?force=true")
         await asyncio.sleep(0.5)
@@ -806,9 +826,20 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
             result = await resp.json()
             exit_code = result.get("StatusCode", -1)
 
-        # Get logs
+        # Get logs (strip Docker stream headers by requesting raw)
         async with docker.get(f"http://localhost/containers/{name}/logs?stdout=true&stderr=true") as resp:
-            logs = await resp.text()
+            raw = await resp.read()
+            # Docker multiplexed stream: each frame has 8-byte header, strip them
+            logs = ""
+            i = 0
+            while i < len(raw):
+                if i + 8 <= len(raw):
+                    size = int.from_bytes(raw[i+4:i+8], "big")
+                    if i + 8 + size <= len(raw):
+                        logs += raw[i+8:i+8+size].decode("utf-8", errors="replace")
+                    i += 8 + size
+                else:
+                    break
 
         # Cleanup
         await docker.delete(f"http://localhost/containers/{name}?force=true")
@@ -854,12 +885,12 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
 
                 if exit_code != 0:
                     _update_state["in_progress"] = False
-                    return web.json_response({"error": f"Git pull failed: {logs[-500:]}"}, status=500)
+                    return web.json_response({"error": f"Git pull failed:\n{logs[-500:]}"}, status=500)
 
-                # Extract new commit hash from last line of logs
-                new_commit = logs.strip().split("\n")[-1].strip()
-                if len(new_commit) != 40:
-                    new_commit = "unknown"
+                # Extract new commit hash — find 40-char hex string in logs
+                import re as _re_commit
+                commit_match = _re_commit.search(r'\b([0-9a-f]{40})\b', logs)
+                new_commit = commit_match.group(1) if commit_match else "unknown"
                 logger.info("Update: pulled to commit %s", new_commit[:12])
 
                 # Phase 2: Rebuild via docker:cli
@@ -878,7 +909,8 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
                     },
                 }
 
-                # Clean up and create rebuilder (but don't start yet)
+                # Ensure rebuild image exists, then create container
+                await _ensure_image(docker, "docker:cli")
                 await docker.delete("http://localhost/containers/osint-rebuilder?force=true")
                 await asyncio.sleep(0.5)
                 async with docker.post("http://localhost/containers/create?name=osint-rebuilder",
@@ -910,9 +942,8 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
 
         except Exception as exc:
             logger.exception("Update failed")
-            return web.json_response({"error": str(exc)}, status=500)
-        finally:
             _update_state["in_progress"] = False
+            return web.json_response({"error": str(exc)}, status=500)
 
     async def api_logs_clear(request):
         log_file = Path("logs/osint_monitor.log")
