@@ -121,6 +121,24 @@ async def main():
         notifiers.append(n)
         health.register("Signal", "notifier")
 
+        async def _start_signal_container():
+            """Start signal-api container via Docker if not running."""
+            try:
+                import aiohttp as _aiohttp
+                async with _aiohttp.ClientSession(connector=_aiohttp.UnixConnector(path="/var/run/docker.sock")) as docker:
+                    async with docker.get("http://localhost/containers/signal-api/json") as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data.get("State", {}).get("Status") != "running":
+                                logger.info("Starting Signal container...")
+                                await docker.post("http://localhost/containers/signal-api/start")
+                        else:
+                            logger.info("Signal container not found — Signal notifications may be unavailable")
+            except Exception:
+                logger.debug("Docker socket not available — assuming Signal container is managed externally")
+
+        asyncio.create_task(_start_signal_container())
+
     if config and config.notifiers.discord and config.notifiers.discord.enabled:
         from src.notifiers.discord import DiscordNotifier
         n = DiscordNotifier(config.notifiers.discord)

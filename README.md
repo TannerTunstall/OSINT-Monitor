@@ -212,16 +212,12 @@ WhatsApp uses WAHA (WhatsApp HTTP API), a self-hosted bridge. The container star
 
 ### Signal
 
-Signal requires the signal-cli REST API container.
+1. In the dashboard **Delivery** tab, toggle **Signal** on
+2. Set the signal-cli API URL (default: `http://signal-api:8080`)
+3. Set sender phone number and add recipient numbers
+4. Click **Save & Restart** — the signal-cli container starts automatically
 
-1. Uncomment the `signal-api` service in `docker-compose.yml`
-2. Run `docker compose up -d signal-api`
-3. In the dashboard **Delivery** tab, toggle **Signal** on
-4. Set the signal-cli API URL (default: `http://signal-api:8080`)
-5. Set sender phone number and add recipient numbers
-6. Click **Save & Restart**
-
-> Signal setup requires registering a phone number with signal-cli. See the [signal-cli-rest-api docs](https://github.com/bbernhard/signal-cli-rest-api) for details.
+> Signal requires registering a phone number with signal-cli before it can send messages. See the [signal-cli-rest-api docs](https://github.com/bbernhard/signal-cli-rest-api) for registration steps.
 
 ### Generic Webhook
 
@@ -267,7 +263,7 @@ OSINT Monitor uses [LibreTranslate](https://github.com/LibreTranslate/LibreTrans
 - **WhatsApp** — Via WAHA (self-hosted). QR pairing from the dashboard. Container pulls and starts automatically.
 - **Discord** — Paste a webhook URL. No bot tokens needed.
 - **Slack** — Paste an incoming webhook URL.
-- **Signal** — Via signal-cli REST API.
+- **Signal** — Via signal-cli REST API. Container starts on-demand when configured.
 - **Email** — SMTP with TLS. Works with Gmail, Outlook, any provider. Credentials managed in dashboard.
 - **Webhook** — Generic HTTP POST/PUT to any endpoint. Integrates with PagerDuty, n8n, Zapier, etc.
 
@@ -313,7 +309,7 @@ OSINT Monitor uses [LibreTranslate](https://github.com/LibreTranslate/LibreTrans
 | `osint-monitor` | Built from Dockerfile | 8550 | The application |
 | `whatsapp-api` | `devlikeapro/waha` | 3000 (localhost) | WhatsApp bridge (starts on-demand) |
 | `translate` | `libretranslate/libretranslate` | 5000 (localhost) | Auto-translation |
-| `signal-api` | `bbernhard/signal-cli-rest-api` | 8080 (localhost) | Signal bridge (commented out by default) |
+| `signal-api` | `bbernhard/signal-cli-rest-api` | 8080 (localhost) | Signal bridge (starts on-demand) |
 
 ## Operations
 
