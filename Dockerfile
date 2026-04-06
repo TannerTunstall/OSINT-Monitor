@@ -12,13 +12,13 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ src/
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN mkdir -p data logs session && \
-    chown -R appuser:appuser /app
-
-USER appuser
+    chown -R appuser:appuser /app && \
+    chmod +x /app/docker-entrypoint.sh
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8550/api/health || exit 1
 
-CMD ["python", "-m", "src.main"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

@@ -128,6 +128,10 @@ fi
 
 mkdir -p data logs telegram_session whatsapp-data session
 
+# Ensure the container's non-root user (UID 1000) can write to mounted paths
+chown -R 1000:1000 data logs telegram_session session 2>/dev/null || true
+chmod 666 "$APP_DIR/.env" "$APP_DIR/config.yaml" 2>/dev/null || true
+
 # ── Detect ARM for WAHA image tag ────────────────────────────
 
 ARCH="$(uname -m)"

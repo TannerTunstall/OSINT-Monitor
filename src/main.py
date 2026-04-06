@@ -67,9 +67,13 @@ async def run_db_cleanup(db: MessageDB, retention_days: int):
 async def main():
     config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
 
-    # Ensure config and .env files exist (first run)
-    Path(config_path).touch(exist_ok=True)
-    Path(".env").touch(exist_ok=True)
+    # Ensure config and .env files exist (first run / pip install mode).
+    # Skip if they already exist — in Docker they are bind-mounted and may
+    # be owned by root, so touching them would fail as non-root user.
+    if not Path(config_path).exists():
+        Path(config_path).touch()
+    if not Path(".env").exists():
+        Path(".env").touch()
 
     # Try to load config — if empty or invalid, run with defaults (dashboard only)
     config = None
