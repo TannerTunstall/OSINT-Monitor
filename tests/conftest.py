@@ -1,4 +1,9 @@
 import pytest
+import aiosqlite
+
+from src.db import MessageDB, SCHEMA
+from src.sources.base import Message
+from datetime import datetime, timezone
 
 
 @pytest.fixture
@@ -40,3 +45,44 @@ def sample_messages():
             "url": "https://x.com/test/status/123",
         },
     ]
+
+
+@pytest.fixture
+async def db():
+    """In-memory SQLite database for testing."""
+    database = MessageDB(":memory:")
+    # Manually connect with in-memory path
+    database._db = await aiosqlite.connect(":memory:")
+    await database._db.executescript(SCHEMA)
+    await database._db.commit()
+    yield database
+    await database.close()
+
+
+@pytest.fixture
+def make_message():
+    """Factory for creating Message objects."""
+    def _make(source="telegram", source_id="msg-1", author="Test", content="Test content", url=None, timestamp=None):
+        return Message(
+            source=source,
+            source_id=source_id,
+            author=author,
+            content=content,
+            url=url,
+            timestamp=timestamp or datetime.now(timezone.utc),
+        )
+    return _make
+
+
+class MockNotifier:
+    """Mock notifier that records all sent messages."""
+    def __init__(self, succeed=True):
+        self.sent = []
+        self.succeed = succeed
+
+    async def send(self, text: str) -> bool:
+        self.sent.append(text)
+        return self.succeed
+
+    async def close(self):
+        pass

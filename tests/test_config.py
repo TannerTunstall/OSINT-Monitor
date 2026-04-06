@@ -4,7 +4,10 @@ import tempfile
 import pytest
 import yaml
 
-from src.config import ConfigError, load_config, validate_config
+from src.config import (
+    ConfigError, load_config, validate_config, is_config_empty,
+    _substitute_env_vars, _parse_rss_feeds, _parse_webhook,
+)
 
 
 class TestValidateConfig:
@@ -118,3 +121,94 @@ class TestLoadConfig:
                 assert config.sources.telegram.api_hash == "substituted_value"
         finally:
             del os.environ["TEST_OSINT_VAR"]
+
+
+class TestBackwardCompat:
+    """Existing users with old config keys shouldn't break on upgrade."""
+
+    def test_aws_health_key_parsed_as_rss_feeds(self):
+        cfg = {
+            "sources": {
+                "aws_health": {
+                    "feeds": [{"url": "https://status.aws.amazon.com/rss/all.rss", "label": "AWS"}]
+                }
+            },
+            "notifiers": {},
+        }
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(cfg, f)
+            f.flush()
+            config = load_config(f.name)
+            assert config.sources.rss_feeds is not None
+            assert config.sources.rss_feeds.feeds[0].label == "AWS"
+
+    def test_region_filter_accepted_as_content_filter(self):
+        raw = {"feeds": [{"url": "https://example.com/rss", "label": "Test", "region_filter": ["us-east-1"]}]}
+        result = _parse_rss_feeds(raw)
+        assert result.feeds[0].content_filter == ["us-east-1"]
+
+
+class TestWebhookParsing:
+    def test_string_urls_become_endpoints(self):
+        raw = {"enabled": True, "urls": [
+            "https://api.example.com/hook1",
+            "https://api.example.com/hook2",
+        ]}
+        result = _parse_webhook(raw)
+        assert len(result.urls) == 2
+        assert result.urls[0].url == "https://api.example.com/hook1"
+        assert result.urls[0].method == "POST"  # default
+
+    def test_dict_urls_with_method_and_headers(self):
+        raw = {"enabled": True, "urls": [
+            {"url": "https://api.example.com/hook", "method": "PUT", "headers": {"X-Token": "abc"}}
+        ]}
+        result = _parse_webhook(raw)
+        assert result.urls[0].method == "PUT"
+        assert result.urls[0].headers == {"X-Token": "abc"}
+
+    def test_mixed_string_and_dict(self):
+        raw = {"enabled": True, "urls": [
+            "https://simple.com/hook",
+            {"url": "https://complex.com/hook", "method": "PUT"},
+        ]}
+        result = _parse_webhook(raw)
+        assert len(result.urls) == 2
+        assert result.urls[0].method == "POST"
+        assert result.urls[1].method == "PUT"
+
+
+class TestEnvVarSubstitution:
+    def test_missing_var_stays_as_is(self):
+        result = _substitute_env_vars("${DEFINITELY_NOT_SET_VAR}")
+        assert result == "${DEFINITELY_NOT_SET_VAR}"
+
+    def test_multiple_vars_in_one_string(self):
+        os.environ["TEST_A"] = "hello"
+        os.environ["TEST_B"] = "world"
+        try:
+            result = _substitute_env_vars("${TEST_A} ${TEST_B}")
+            assert result == "hello world"
+        finally:
+            del os.environ["TEST_A"]
+            del os.environ["TEST_B"]
+
+
+class TestConfigErrorCollectsAll:
+    def test_multiple_errors_reported_at_once(self):
+        """Config with multiple problems should report all of them, not just the first."""
+        cfg = {
+            "sources": {"telegram": {}},  # missing api_id, api_hash, channels
+            "notifiers": {"discord": {"enabled": True}},  # missing webhook_urls
+        }
+        errors = validate_config(cfg)
+        assert len(errors) >= 4  # at least api_id, api_hash, channels, webhook_urls
+
+
+class TestIsConfigEmpty:
+    def test_empty_when_no_sources_or_notifiers(self):
+        assert is_config_empty({}) is True
+        assert is_config_empty({"sources": {}, "notifiers": {}}) is True
+
+    def test_not_empty_with_sources(self):
+        assert is_config_empty({"sources": {"rss_feeds": {"feeds": []}}}) is False
