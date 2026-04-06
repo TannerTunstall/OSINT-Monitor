@@ -268,6 +268,11 @@ class Pipeline:
         if not msg.source_id.startswith("test-") and self._is_duplicate_content(filter_text, msg.source_id, msg.author or "unknown"):
             return
 
+        # Store enrichment data (translation + matched keywords) in DB
+        if translation or matched_keywords:
+            kw_str = ", ".join(matched_keywords) if matched_keywords else None
+            await self.db.update_enrichment(msg.source, msg.source_id, translation, kw_str)
+
         # Step 4: Format and send
         self._recent_texts.append((filter_text, msg.author or "unknown"))
         text = self._format_message(msg, translation, matched_keywords)

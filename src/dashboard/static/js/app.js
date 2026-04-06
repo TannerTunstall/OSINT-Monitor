@@ -274,12 +274,16 @@ function renderFeedMessages(query) {
     const srcLabel = esc((m.source || '').toUpperCase());
     const author = esc(m.author || 'Unknown');
     const url = m.url ? `<a class="feed-link" href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.url)}</a>` : '';
+    const keywords = m.matched_keywords ? `<div class="feed-keywords">Flagged: ${esc(m.matched_keywords)}</div>` : '';
+    const translation = m.translation ? `<div class="feed-translation">${esc(m.translation.substring(0, 600))}</div><div class="feed-original-label">Original:</div>` : '';
     return `<div class="feed-card">
       <div class="feed-card-header">
         <span class="feed-badge ${src}">${srcLabel}</span>
         <span class="feed-author">${author}</span>
         <span class="feed-time">${esc(ago)}</span>
       </div>
+      ${keywords}
+      ${translation}
       <div class="feed-body">${content}</div>
       ${url}
     </div>`;
