@@ -946,7 +946,7 @@ async function saveTranslateLanguages() {
 // ── Telegram Auth (inline in Sources tab) ───────────────
 
 function tgAuthStatus(msg, type) {
-  document.getElementById('tg-auth-status').innerHTML = `<div class="status-msg ${type}" style="margin-top:10px">${msg}</div>`;
+  document.getElementById('tg-auth-status').innerHTML = `<div class="status-msg ${type}" style="margin-top:10px">${esc(msg)}</div>`;
 }
 
 async function tgAuthStart() {
@@ -1000,7 +1000,7 @@ async function tgAuth2fa() {
 // ── WhatsApp QR Pairing (modal) ─────────────────────────
 
 function waStatus(msg, type) {
-  document.getElementById('wa-pair-status').innerHTML = `<div class="status-msg ${type}" style="margin-top:10px">${msg}</div>`;
+  document.getElementById('wa-pair-status').innerHTML = `<div class="status-msg ${type}" style="margin-top:10px">${esc(msg)}</div>`;
 }
 
 async function showWhatsAppQR() {
@@ -1027,7 +1027,7 @@ async function waStartSession() {
   } else if (result.status === 'WORKING') {
     waStatus('WhatsApp is already connected!', 'ok');
   } else {
-    waStatus(`Status: ${result.status || 'unknown'}. Loading QR...`, 'info');
+    waStatus(`Status: ${esc(result.status || 'unknown')}. Loading QR...`, 'info');
     await loadModalQR();
   }
 }
@@ -1039,11 +1039,11 @@ async function loadModalQR() {
     const resp = await fetch('/api/whatsapp/qr');
     if (resp.ok) {
       const d = await resp.json();
-      if (d.data) { c.innerHTML = `<img src="data:${d.mimetype || 'image/png'};base64,${d.data}" style="max-width:260px;border-radius:8px;background:white;padding:12px">`; }
-      else { c.innerHTML = `<p style="color:var(--text2)">${d.message || 'Click "Start Session" first.'}</p>`; }
+      if (d.data) { c.innerHTML = `<img src="data:${esc(d.mimetype || 'image/png')};base64,${d.data}" style="max-width:260px;border-radius:8px;background:white;padding:12px">`; }
+      else { c.innerHTML = `<p style="color:var(--text2)">${esc(d.message || 'Click "Start Session" first.')}</p>`; }
     } else {
       const d = await resp.json().catch(() => ({}));
-      c.innerHTML = `<p style="color:var(--text2)">${d.message || 'Click "Start Session" first.'}</p>`;
+      c.innerHTML = `<p style="color:var(--text2)">${esc(d.message || 'Click "Start Session" first.')}</p>`;
     }
   } catch (e) { c.innerHTML = `<p style="color:var(--red)">Cannot reach WhatsApp API.</p>`; }
 }

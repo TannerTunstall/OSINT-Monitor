@@ -221,10 +221,20 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
         masked = {k: _mask_secret(v) for k, v in env.items()}
         return web.json_response(masked)
 
+    ALLOWED_CREDENTIAL_KEYS = {
+        "TELEGRAM_API_ID", "TELEGRAM_API_HASH",
+        "CLOUDFLARE_RADAR_API_TOKEN",
+        "SMTP_USER", "SMTP_PASSWORD",
+        "WEBHOOK_TOKEN",
+        "WAHA_TAG",
+    }
+
     async def api_credentials_put(request):
         data = await request.json()
         current = _read_env()
         for k, v in data.items():
+            if k not in ALLOWED_CREDENTIAL_KEYS:
+                continue
             if v and not v.endswith("****"):
                 current[k] = v
         _write_env(current)
@@ -269,8 +279,12 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
 
                     elif resp.status == 404:
                         # Container doesn't exist — pull image and create it
+                        import re as _re_tag
                         env = _read_env()
                         waha_tag = env.get("WAHA_TAG", "latest")
+                        if not _re_tag.match(r"^[a-zA-Z0-9._-]+$", waha_tag):
+                            logger.warning("Invalid WAHA_TAG value: %s — using 'latest'", waha_tag)
+                            waha_tag = "latest"
                         image = f"devlikeapro/waha:{waha_tag}"
 
                         # Pull image
