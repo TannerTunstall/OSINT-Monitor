@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OSINT Monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23020617'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%2322c55e'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/style.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
 </head>
@@ -224,16 +225,17 @@
         <button class="btn btn-sm btn-outline" data-filter="radar" onclick="setFeedSource('radar')">Radar</button>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
-        <input type="text" id="feed-search" placeholder="Search messages..." style="width:200px;padding:5px 10px;font-size:12px" oninput="filterFeedSearch()">
+        <input type="text" id="feed-search" placeholder="Search all messages..." aria-label="Search messages" style="width:220px;padding:5px 10px;font-size:12px" oninput="feedSearch()">
         <button class="btn btn-sm btn-outline" onclick="exportData('csv')">CSV</button>
         <button class="btn btn-sm btn-outline" onclick="exportData('json')">JSON</button>
         <button class="btn btn-sm btn-outline" onclick="loadFeed()">Refresh</button>
       </div>
     </div>
-    <div id="feed-count" style="font-size:11px;color:var(--text2);margin-bottom:8px"></div>
+    <div id="feed-count" aria-live="polite" style="font-size:11px;color:var(--text2);margin-bottom:8px"></div>
     <div id="feed-list" class="feed-container">
       <div class="feed-empty">Loading...</div>
     </div>
+    <button class="btn btn-outline hidden" id="feed-load-more" onclick="loadMoreFeed()" style="width:100%;margin-top:12px;padding:10px">Load more messages</button>
   </div>
 
   <!-- ═══ DELIVERY TAB ═══ -->

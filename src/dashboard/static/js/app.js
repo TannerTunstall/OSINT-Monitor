@@ -220,12 +220,20 @@ async function clearLogs() { await api('POST', 'logs/clear'); toast('Logs cleare
 // ── Feed ────────────────────────────────────────────────
 
 let feedSource = 'all';
+let _feedMessages = [];
+let _feedTotal = 0;
+let _feedOffset = 0;
+let _feedQuery = '';
+let _feedSearchTimer = null;
+const FEED_PAGE_SIZE = 100;
 
 function setFeedSource(src) {
   feedSource = src;
   document.querySelectorAll('#tab-feed .filter-bar .btn-sm').forEach(b => b.classList.remove('active'));
   const btn = document.querySelector(`#tab-feed .filter-bar [data-filter="${src}"]`);
   if (btn) btn.classList.add('active');
+  _feedOffset = 0;
+  _feedMessages = [];
   loadFeed();
 }
 
@@ -244,41 +252,51 @@ function _timeAgo(dateStr) {
   } catch (e) { return dateStr.substring(0, 16); }
 }
 
-let _feedMessages = [];
-
-function filterFeedSearch() {
-  const q = (document.getElementById('feed-search')?.value || '').toLowerCase().trim();
-  renderFeedMessages(q);
+function feedSearch() {
+  clearTimeout(_feedSearchTimer);
+  _feedSearchTimer = setTimeout(() => {
+    const q = (document.getElementById('feed-search')?.value || '').trim();
+    if (q === _feedQuery) return;
+    _feedQuery = q;
+    _feedOffset = 0;
+    _feedMessages = [];
+    loadFeed();
+  }, 300);
 }
 
-function renderFeedMessages(query) {
+function toggleFeedCard(el) {
+  el.classList.toggle('expanded');
+}
+
+function renderFeedMessages(append) {
   const el = document.getElementById('feed-list');
   const countEl = document.getElementById('feed-count');
-  let msgs = _feedMessages;
-  if (query) {
-    msgs = msgs.filter(m =>
-      (m.content || '').toLowerCase().includes(query) ||
-      (m.author || '').toLowerCase().includes(query)
-    );
-  }
-  if (countEl) countEl.textContent = `Showing ${msgs.length} of ${_feedMessages.length} messages`;
-  if (!msgs.length) {
-    el.innerHTML = query
+  if (countEl) countEl.textContent = `Showing ${_feedMessages.length} of ${_feedTotal} messages`;
+
+  if (!_feedMessages.length) {
+    el.innerHTML = _feedQuery
       ? '<div class="feed-empty">No messages match your search.</div>'
       : '<div class="feed-empty">No messages yet.<br>Once sources are configured and polling, messages will appear here.</div>';
     return;
   }
-  el.innerHTML = msgs.map(m => {
+
+  const msgs = append ? _feedMessages.slice(-FEED_PAGE_SIZE) : _feedMessages;
+  const html = msgs.map(m => {
     const ts = m.timestamp || m.created_at || '';
     const ago = _timeAgo(ts);
-    const content = esc((m.content || '').substring(0, 600));
+    const fullContent = esc(m.content || '');
+    const shortContent = esc((m.content || '').substring(0, 600));
+    const isLong = (m.content || '').length > 600;
     const src = (m.source || '').toLowerCase();
     const srcLabel = esc((m.source || '').toUpperCase());
     const author = esc(m.author || 'Unknown');
     const url = m.url ? `<a class="feed-link" href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.url)}</a>` : '';
     const keywords = m.matched_keywords ? `<div class="feed-keywords">Flagged: ${esc(m.matched_keywords)}</div>` : '';
-    const translation = m.translation ? `<div class="feed-translation">${esc(m.translation.substring(0, 600))}</div><div class="feed-original-label">Original:</div>` : '';
-    return `<div class="feed-card">
+    const fullTranslation = m.translation ? esc(m.translation) : '';
+    const shortTranslation = m.translation ? esc(m.translation.substring(0, 600)) : '';
+    const translation = m.translation ? `<div class="feed-translation"><span class="feed-short">${shortTranslation}</span><span class="feed-full">${fullTranslation}</span></div><div class="feed-original-label">Original:</div>` : '';
+    const expandHint = isLong ? '<div class="feed-expand-hint feed-short">Click to expand</div>' : '';
+    return `<div class="feed-card${isLong ? ' expandable' : ''}" ${isLong ? 'onclick="toggleFeedCard(this)"' : ''}>
       <div class="feed-card-header">
         <span class="feed-badge ${src}">${srcLabel}</span>
         <span class="feed-author">${author}</span>
@@ -286,24 +304,50 @@ function renderFeedMessages(query) {
       </div>
       ${keywords}
       ${translation}
-      <div class="feed-body">${content}</div>
+      <div class="feed-body"><span class="feed-short">${shortContent}</span><span class="feed-full">${fullContent}</span></div>
+      ${expandHint}
       ${url}
     </div>`;
   }).join('');
+
+  if (append) {
+    el.insertAdjacentHTML('beforeend', html);
+  } else {
+    el.innerHTML = html;
+  }
+
+  // Show/hide load more button
+  const loadMoreBtn = document.getElementById('feed-load-more');
+  if (loadMoreBtn) {
+    loadMoreBtn.classList.toggle('hidden', _feedMessages.length >= _feedTotal);
+  }
 }
 
-async function loadFeed() {
-  const data = await api('GET', `messages/recent?limit=100&source=${feedSource}`);
-  if (!data || !data.messages) return;
-  _feedMessages = data.messages;
-  const el = document.getElementById('feed-list');
-  if (!data.messages.length) {
-    document.getElementById('feed-count').textContent = '';
-    el.innerHTML = '<div class="feed-empty">No messages yet.<br>Once sources are configured and polling, messages will appear here.</div>';
-    return;
+async function loadFeed(append) {
+  const params = new URLSearchParams({
+    limit: FEED_PAGE_SIZE,
+    offset: _feedOffset,
+    source: feedSource,
+  });
+  if (_feedQuery) params.set('q', _feedQuery);
+
+  const data = await api('GET', `messages/recent?${params}`);
+  if (!data) return;
+
+  _feedTotal = data.total || 0;
+
+  if (append) {
+    _feedMessages = _feedMessages.concat(data.messages || []);
+  } else {
+    _feedMessages = data.messages || [];
   }
-  const query = (document.getElementById('feed-search')?.value || '').toLowerCase().trim();
-  renderFeedMessages(query);
+
+  renderFeedMessages(append);
+}
+
+function loadMoreFeed() {
+  _feedOffset += FEED_PAGE_SIZE;
+  loadFeed(true);
 }
 
 
