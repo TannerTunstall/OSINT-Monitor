@@ -1,7 +1,7 @@
 import pytest
 import aiosqlite
 
-from src.db import MessageDB, SCHEMA
+from src.db import MessageDB, SCHEMA, MIGRATE_COLUMNS
 from src.sources.base import Message
 from datetime import datetime, timezone
 
@@ -54,6 +54,12 @@ async def db():
     # Manually connect with in-memory path
     database._db = await aiosqlite.connect(":memory:")
     await database._db.executescript(SCHEMA)
+    # Run migrations (same as connect())
+    cursor = await database._db.execute("PRAGMA table_info(messages)")
+    existing = {row[1] for row in await cursor.fetchall()}
+    for col_name, col_type in MIGRATE_COLUMNS:
+        if col_name not in existing:
+            await database._db.execute(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}")
     await database._db.commit()
     yield database
     await database.close()

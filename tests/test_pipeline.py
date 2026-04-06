@@ -1,9 +1,11 @@
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch, MagicMock
 from collections import deque
 
+import aiohttp
+
 from src.processing.pipeline import Pipeline, _clean_html, _needs_translation, _truncate
-from src.config import FilterConfig, SourceFilter
+from src.config import FilterConfig, SourceFilter, TranslationConfig
 from src.sources.base import Message
 from datetime import datetime, timezone
 from tests.conftest import MockNotifier
@@ -177,3 +179,153 @@ class TestPipelineProcess:
         # But it should be in the DB
         results = await db.get_recent(limit=10)
         assert len(results) == 1
+
+
+class TestDetectLanguage:
+    """Tests for the LibreTranslate /detect integration."""
+
+    def _make_pipeline_with_translation(self, db):
+        config = TranslationConfig(enabled=True, api_url="http://translate:5000", target_language="en")
+        return Pipeline(db=db, notifiers=[], filters=None, health=None, translation=config)
+
+    async def test_returns_language_code(self, db):
+        p = self._make_pipeline_with_translation(db)
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=[{"language": "fr", "confidence": 0.95}])
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=mock_resp)
+        mock_session.closed = False
+        p._translate_session = mock_session
+
+        result = await p._detect_language("Bonjour le monde")
+        assert result == "fr"
+
+    async def test_api_failure_returns_none(self, db):
+        p = self._make_pipeline_with_translation(db)
+        mock_resp = AsyncMock()
+        mock_resp.status = 500
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=mock_resp)
+        mock_session.closed = False
+        p._translate_session = mock_session
+
+        result = await p._detect_language("some text")
+        assert result is None
+
+    async def test_empty_response_returns_none(self, db):
+        p = self._make_pipeline_with_translation(db)
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=[])
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=mock_resp)
+        mock_session.closed = False
+        p._translate_session = mock_session
+
+        result = await p._detect_language("text")
+        assert result is None
+
+
+class TestFormatMessage:
+    """Tests for message formatting with various field combinations."""
+
+    def _make_pipeline(self, db):
+        return Pipeline(db=db, notifiers=[], filters=None, health=None, translation=None)
+
+    def test_with_translation_and_keywords(self, db):
+        p = self._make_pipeline(db)
+        msg = Message(source="telegram", source_id="1", author="Channel",
+                      content="محتوى عربي", url=None, timestamp=None)
+        result = p._format_message(msg, translation="Arabic content", matched_keywords=["content"])
+        assert "Arabic content" in result
+        assert "[Original]" in result
+        assert 'Flagged: "content"' in result
+
+    def test_without_author(self, db):
+        p = self._make_pipeline(db)
+        msg = Message(source="rss", source_id="1", author=None,
+                      content="Some text", url=None, timestamp=None)
+        result = p._format_message(msg, translation=None, matched_keywords=[])
+        assert "[RSS]" in result
+        assert "Some text" in result
+        # No author line
+        assert result.startswith("[RSS]")
+
+    def test_without_url_or_timestamp(self, db):
+        p = self._make_pipeline(db)
+        msg = Message(source="twitter", source_id="1", author="@test",
+                      content="Tweet", url=None, timestamp=None)
+        result = p._format_message(msg, translation=None, matched_keywords=[])
+        assert "Tweet" in result
+        assert "http" not in result
+        assert "UTC" not in result
+
+    def test_truncates_long_content(self, db):
+        p = self._make_pipeline(db)
+        msg = Message(source="telegram", source_id="1", author="Test",
+                      content="x" * 3000, url=None, timestamp=None)
+        result = p._format_message(msg, translation=None, matched_keywords=[])
+        assert len(result) <= 1500 + 50  # truncate default + header overhead
+        assert result.endswith("...")
+
+
+class TestProcessEnrichment:
+    """Tests for translation and keyword data being stored in DB."""
+
+    async def test_translation_stored_in_db(self, db, make_message):
+        notifier = MockNotifier()
+        config = TranslationConfig(enabled=True, api_url="http://translate:5000", target_language="en")
+        p = Pipeline(db=db, notifiers=[notifier], filters=None, health=None, translation=config)
+
+        # Mock detect + translate
+        mock_detect_resp = AsyncMock()
+        mock_detect_resp.status = 200
+        mock_detect_resp.json = AsyncMock(return_value=[{"language": "fr", "confidence": 0.9}])
+        mock_detect_resp.__aenter__ = AsyncMock(return_value=mock_detect_resp)
+        mock_detect_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_translate_resp = AsyncMock()
+        mock_translate_resp.status = 200
+        mock_translate_resp.json = AsyncMock(return_value={"translatedText": "Hello world"})
+        mock_translate_resp.__aenter__ = AsyncMock(return_value=mock_translate_resp)
+        mock_translate_resp.__aexit__ = AsyncMock(return_value=False)
+
+        call_count = 0
+        def mock_post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return mock_detect_resp
+            return mock_translate_resp
+
+        mock_session = MagicMock()
+        mock_session.post = mock_post
+        mock_session.closed = False
+        p._translate_session = mock_session
+
+        msg = make_message(source_id="fr-1", content="Bonjour le monde")
+        await p.process(msg)
+
+        results = await db.get_recent(limit=1)
+        assert results[0]["translation"] == "Hello world"
+
+    async def test_keywords_stored_in_db(self, db, make_message):
+        notifier = MockNotifier()
+        filters = FilterConfig(default=SourceFilter(include_keywords=["outage"]))
+        p = Pipeline(db=db, notifiers=[notifier], filters=filters, health=None, translation=None)
+
+        msg = make_message(source_id="kw-1", content="Major outage affecting services")
+        await p.process(msg)
+
+        results = await db.get_recent(limit=1)
+        assert results[0]["matched_keywords"] == "outage"
