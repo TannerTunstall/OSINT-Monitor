@@ -45,14 +45,13 @@ services:
     ports:
       - "127.0.0.1:5000:5000"
 
-  # Uncomment to use Signal instead of / alongside WhatsApp:
-  # signal-api:
-  #   image: bbernhard/signal-cli-rest-api:latest
-  #   container_name: signal-api
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ./signal-data:/home/.local/share/signal-cli
-  #   environment:
-  #     - MODE=native
-  #   ports:
-  #     - "127.0.0.1:8080:8080"
+  signal-api:
+    image: bbernhard/signal-cli-rest-api:latest
+    container_name: signal-api
+    restart: "no"
+    volumes:
+      - ./signal-data:/home/.local/share/signal-cli
+    environment:
+      - MODE=native
+    ports:
+      - "127.0.0.1:8080:8080"

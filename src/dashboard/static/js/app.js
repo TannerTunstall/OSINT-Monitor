@@ -1085,6 +1085,11 @@ async function init() {
   await loadConfig();
   await loadCredentials();
 
+  // Ensure RSS presets render even if no feeds are configured yet
+  if (!document.getElementById('feed-presets').children.length) {
+    renderFeedPresets([]);
+  }
+
   // Auto-refresh dashboard every 15 seconds when visible
   _analyticsInterval = setInterval(() => {
     const dashTab = document.getElementById('tab-analytics');
