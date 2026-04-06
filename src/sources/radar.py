@@ -54,7 +54,8 @@ class RadarSource(Source):
                     data = await resp.json()
 
                 for a in data.get("result", {}).get("trafficAnomalies", []):
-                    asn = a.get("asnName", "")
+                    asn_details = a.get("asnDetails") or {}
+                    asn = asn_details.get("name", "")
                     status = a.get("status", "")
                     event_type = a.get("type", "")
                     start_date = a.get("startDate", "")
@@ -109,9 +110,9 @@ class RadarSource(Source):
 
                 for o in outages:
                     data_source = o.get("dataSource", "")
-                    locations = o.get("linkedLocations", []) or []
+                    locations = o.get("locationsDetails", []) or []
                     location_codes = [loc.get("code", "") for loc in locations]
-                    asns = o.get("linkedAsns", []) or []
+                    asns = o.get("asnsDetails", []) or []
 
                     # If countries are configured, filter for matching locations or origin outages
                     # If no countries configured, include all origin outages
