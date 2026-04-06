@@ -4,6 +4,8 @@ Self-hosted intelligence monitoring. Watch Telegram, Twitter/X, RSS feeds, and C
 
 ![OSINT Monitor Dashboard](docs/screenshot.png)
 
+![Live Feed — translation, keyword flagging, and multi-source filtering](docs/feed.png)
+
 ## Use Cases
 
 **Threat Intelligence / OSINT Teams** — Monitor Telegram channels used by threat actors, hacktivist groups, or regional news sources. Get keyword-filtered alerts delivered to your team's Slack or Discord. Export collected intelligence as CSV for reporting.
