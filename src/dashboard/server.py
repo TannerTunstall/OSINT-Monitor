@@ -836,9 +836,18 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
 
                 # Phase 1: Git pull via alpine/git
                 logger.info("Update: pulling latest code...")
+                git_cmd = (
+                    'OWNER=$(stat -c "%u:%g" /repo 2>/dev/null || stat -f "%u:%g" /repo) && '
+                    'git config --global --add safe.directory /repo && '
+                    'git fetch origin main && '
+                    'git reset --hard origin/main && '
+                    'chown -R $OWNER /repo && '
+                    'git rev-parse HEAD'
+                )
                 exit_code, logs = await _create_and_run_container(docker, "osint-updater", {
                     "Image": "alpine/git",
-                    "Cmd": ["sh", "-c", "git fetch origin main && git reset --hard origin/main && git rev-parse HEAD"],
+                    "Entrypoint": ["sh"],
+                    "Cmd": ["-c", git_cmd],
                     "WorkingDir": "/repo",
                     "HostConfig": {"Binds": [f"{host_path}:/repo"]},
                 })
