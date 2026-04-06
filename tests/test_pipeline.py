@@ -275,7 +275,7 @@ class TestFormatMessage:
         msg = Message(source="telegram", source_id="1", author="Test",
                       content="x" * 3000, url=None, timestamp=None)
         result = p._format_message(msg, translation=None, matched_keywords=[])
-        assert len(result) <= 1500 + 50  # truncate default + header overhead
+        assert len(result) <= 2000  # MAX_MESSAGE_LENGTH
         assert result.endswith("...")
 
 
