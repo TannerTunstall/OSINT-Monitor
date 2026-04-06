@@ -119,11 +119,11 @@
       <div class="toggle-row"><h3>Cloudflare Radar</h3><div class="toggle" id="radar-toggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleSwitch(this)" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();toggleSwitch(this)}"></div></div>
       <label>Poll Interval (sec)</label>
       <input type="number" id="poll-radar" value="300" min="60">
-      <label>Countries to monitor (ISO country code : name)</label>
+      <label>Countries to monitor</label>
       <div class="tag-list" id="radar-countries"></div>
-      <div class="add-row">
-        <input type="text" id="radar-country-input" placeholder="US:United States" style="flex:1">
-        <button class="btn btn-sm btn-outline" onclick="addRadarCountry()">Add</button>
+      <div class="add-row" style="position:relative">
+        <input type="text" id="radar-country-input" placeholder="Search countries..." autocomplete="off" style="flex:1" oninput="filterRadarCountries()" onfocus="filterRadarCountries()">
+        <div id="radar-country-dropdown" class="autocomplete-dropdown hidden"></div>
       </div>
       <p class="help">Leave empty to monitor global cloud outages only. API token is in the Credentials tab.</p>
     </div>
