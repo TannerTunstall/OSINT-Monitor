@@ -2,7 +2,7 @@ import logging
 
 import aiohttp
 
-from src.config import WebhookConfig
+from src.config import WebhookConfig, WebhookEndpoint
 from src.notifiers.base import Notifier
 from src.utils.retry import with_retry
 
@@ -20,12 +20,12 @@ class WebhookNotifier(Notifier):
         return self._session
 
     @with_retry(max_retries=3, base_delay=2.0)
-    async def _send_to_endpoint(self, endpoint: dict, text: str) -> bool:
+    async def _send_to_endpoint(self, endpoint: WebhookEndpoint, text: str) -> bool:
         session = self._get_session()
-        url = endpoint["url"]
-        method = endpoint.get("method", "POST").upper()
-        headers = endpoint.get("headers", {})
-        body_template = endpoint.get("body_template", '{"message": "{message}"}')
+        url = endpoint.url
+        method = endpoint.method.upper()
+        headers = endpoint.headers
+        body_template = endpoint.body_template
         body = body_template.replace("{message}", text.replace('"', '\\"').replace("\n", "\\n"))
 
         async with session.request(
@@ -50,7 +50,7 @@ class WebhookNotifier(Notifier):
                 if not ok:
                     all_ok = False
             except Exception:
-                logger.exception("Failed to send webhook to %s", endpoint.get("url", "unknown"))
+                logger.exception("Failed to send webhook to %s", endpoint.url)
                 all_ok = False
         return all_ok
 
