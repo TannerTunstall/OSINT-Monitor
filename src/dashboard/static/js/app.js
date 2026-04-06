@@ -748,8 +748,15 @@ const SOURCE_COLORS = {
   twitter: '#8b5cf6',
   rss: '#f59e0b',
   radar: '#22c55e',
-  status: '#f59e0b',
+  status: '#f59e0b',      // legacy alias for rss
+  aws_health: '#f59e0b',  // legacy alias for rss
 };
+
+// Normalize legacy source names for display
+function normalizeSourceName(name) {
+  if (name === 'status' || name === 'aws_health') return 'rss';
+  return name;
+}
 
 let _charts = {};
 let _analyticsData = null;
@@ -778,11 +785,31 @@ function setVolumeRange(range) {
   if (_analyticsData) renderVolumeChart(_analyticsData);
 }
 
+function _mergeSourceData(obj) {
+  // Merge legacy source names (status, aws_health) into rss
+  if (!obj) return obj;
+  const merged = {};
+  for (const [key, val] of Object.entries(obj)) {
+    const norm = normalizeSourceName(key);
+    if (typeof val === 'number') {
+      merged[norm] = (merged[norm] || 0) + val;
+    } else if (typeof val === 'object' && val !== null) {
+      if (!merged[norm]) merged[norm] = {};
+      for (const [k, v] of Object.entries(val)) {
+        merged[norm][k] = (merged[norm][k] || 0) + v;
+      }
+    } else {
+      merged[norm] = val;
+    }
+  }
+  return merged;
+}
+
 function renderVolumeChart(data) {
   const allSources = [...new Set([
     ...Object.keys(data.by_source || {}),
     ...Object.values(data.hourly || {}).flatMap(h => Object.keys(h)),
-  ])];
+  ].map(normalizeSourceName))];
 
   let timeData, labelFn;
   if (_volumeRange === '24h') {
@@ -795,6 +822,13 @@ function renderVolumeChart(data) {
     timeData = data.hourly || {};
     labelFn = h => h.slice(5, 13); // MM-DD HH
   }
+
+  // Normalize legacy source names in time-series data
+  const normalizedTime = {};
+  for (const [k, v] of Object.entries(timeData)) {
+    normalizedTime[k] = _mergeSourceData(v);
+  }
+  timeData = normalizedTime;
 
   const keys = Object.keys(timeData).sort();
   if (!keys.length) return;
@@ -868,11 +902,14 @@ async function loadAnalytics() {
     </div>`;
   }).join('');
 
+  // Normalize legacy source names
+  data.by_source = _mergeSourceData(data.by_source || {});
+
   // All sources for chart coloring
   const allSources = [...new Set([
     ...Object.keys(data.by_source || {}),
     ...Object.values(data.hourly || {}).flatMap(h => Object.keys(h)),
-  ])];
+  ].map(normalizeSourceName))];
 
   // Volume chart
   renderVolumeChart(data);
@@ -903,11 +940,15 @@ async function loadAnalytics() {
   }
 
   // Daily stacked bar (30 days)
-  const days = Object.keys(data.daily || {}).sort();
+  const normalizedDaily = {};
+  for (const [k, v] of Object.entries(data.daily || {})) {
+    normalizedDaily[k] = _mergeSourceData(v);
+  }
+  const days = Object.keys(normalizedDaily).sort();
   if (days.length) {
     const dailyDatasets = allSources.map(src => ({
       label: src,
-      data: days.map(d => (data.daily[d] || {})[src] || 0),
+      data: days.map(d => (normalizedDaily[d] || {})[src] || 0),
       backgroundColor: SOURCE_COLORS[src] || '#6366f1',
       borderRadius: 2,
     }));

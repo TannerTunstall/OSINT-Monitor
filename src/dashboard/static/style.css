@@ -80,7 +80,7 @@ body {
 /* ── Layout ──────────────────────────────────────────── */
 
 .container {
-  max-width: 1100px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 20px 24px;
 }
@@ -719,12 +719,24 @@ a:hover { text-decoration: underline; }
 
 /* ── Responsive ──────────────────────────────────────── */
 
-@media (max-width: 640px) {
+@media (max-width: 1024px) {
+  .container { max-width: 100%; }
+  .card-row > .card { min-width: 200px; }
+}
+
+@media (max-width: 768px) {
   .container { padding: 16px; }
   .card-row { flex-direction: column; }
   .card-row > .card { min-width: 0; }
+  .status-bar { grid-template-columns: repeat(2, 1fr); }
+  .tab { padding: 10px 16px; font-size: 13px; }
+}
+
+@media (max-width: 480px) {
+  .container { padding: 12px; }
   .status-bar { grid-template-columns: 1fr; }
-  .tab { padding: 10px 14px; font-size: 12px; }
+  .tab { padding: 8px 12px; font-size: 12px; }
+  .nav { gap: 0; }
 }
 
 /* ── Reduced Motion ──────────────────────────────────── */
