@@ -237,7 +237,7 @@ The default payload is `{"message": "..."}`. For custom headers (like auth token
 
 OSINT Monitor uses [LibreTranslate](https://github.com/LibreTranslate/LibreTranslate) (self-hosted, no API keys) for automatic translation.
 
-- Translates messages where >20% of characters are non-Latin script (Arabic, Cyrillic, CJK, Thai, etc.)
+- Automatically detects the source language via LibreTranslate and translates when it differs from your target language
 - Original text is preserved below the translation in alerts
 - Language models download on first start (takes a few minutes)
 

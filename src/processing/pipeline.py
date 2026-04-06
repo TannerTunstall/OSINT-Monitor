@@ -127,13 +127,49 @@ class Pipeline:
         logger.debug("No keyword filter for %s — forwarding", source)
         return True, []
 
+    async def _detect_language(self, text: str) -> str | None:
+        """Use LibreTranslate /detect to identify the language of text."""
+        try:
+            if self._translate_session is None or self._translate_session.closed:
+                self._translate_session = aiohttp.ClientSession()
+
+            url = f"{self.translation.api_url.rstrip('/')}/detect"
+            payload = {"q": text[:500]}  # Short sample is enough for detection
+
+            async with self._translate_session.post(
+                url, json=payload, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data and isinstance(data, list) and len(data) > 0:
+                        lang = data[0].get("language")
+                        confidence = data[0].get("confidence", 0)
+                        logger.debug("Language detection: %s (confidence: %.2f)", lang, confidence)
+                        return lang
+                else:
+                    logger.debug("Language detection failed: HTTP %d", resp.status)
+        except Exception as exc:
+            logger.debug("Language detection error: %s", exc)
+        return None
+
     async def _translate(self, text: str) -> str | None:
         if not self.translation or not self.translation.enabled:
             return None
-        if not _needs_translation(text):
+        if not text or not text.strip():
             return None
 
-        logger.info("Translation: detected non-target-language text, translating...")
+        # Use LibreTranslate's /detect to check if text is already in target language
+        detected = await self._detect_language(text)
+        if detected and detected == self.translation.target_language:
+            logger.debug("Text already in target language (%s), skipping translation", detected)
+            return None
+
+        # Fallback: if detection fails, use character-based heuristic
+        if detected is None and not _needs_translation(text):
+            return None
+
+        logger.info("Translation: detected %s text, translating to %s...",
+                     detected or "non-target-language", self.translation.target_language)
         try:
             if self._translate_session is None or self._translate_session.closed:
                 self._translate_session = aiohttp.ClientSession()
