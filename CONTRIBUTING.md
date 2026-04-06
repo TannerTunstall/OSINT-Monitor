@@ -24,15 +24,15 @@ The dashboard will be available at `http://localhost:8550`.
 
 ```
 src/
-  main.py                  # Entrypoint (setup mode / full mode)
+  main.py                  # Async entrypoint — boots sources, pipeline, notifiers, dashboard
   config.py                # YAML config parsing + validation
-  db.py                    # SQLite message store
+  db.py                    # SQLite message store with retention and analytics
   health.py                # Connector health tracking
   sources/
     base.py                # Source ABC + Message dataclass
     telegram.py            # Telegram via Telethon
-    twitter.py             # Twitter/X via Nitter RSS
-    rss.py                 # Generic RSS/Atom feeds
+    twitter.py             # Twitter/X via Nitter RSS with instance failover
+    rss.py                 # Generic RSS/Atom feeds with content filtering
     radar.py               # Cloudflare Radar API
   notifiers/
     base.py                # Notifier ABC
@@ -45,12 +45,25 @@ src/
   processing/
     pipeline.py            # Dedup, translate, filter, format, send
   dashboard/
-    server.py              # aiohttp REST API
-    telegram_auth.py       # Telegram OAuth flow
-    static/index.html      # Dashboard SPA
+    server.py              # aiohttp REST API + security middleware
+    telegram_auth.py       # Telegram phone authentication flow
+    static/
+      index.html           # Dashboard SPA shell
+      style.css            # Full design system (dark theme)
+      js/
+        app.js             # Tab logic, analytics, config management
+        api.js             # API helpers, escaping, feed presets
   utils/
     logging.py             # Log setup with rotation
-    retry.py               # Exponential backoff decorator
+    retry.py               # Exponential backoff with jitter
+tests/
+  conftest.py              # Shared fixtures (async DB, message factory, mock notifier)
+  test_config.py           # Config parsing, backward compat, validation
+  test_db.py               # SQLite dedup, export, stats, cleanup
+  test_notifiers.py        # Discord, Slack, Webhook delivery
+  test_pipeline.py         # Process flow, dedup, keywords, similarity, translation
+  test_retry.py            # Retry logic, backoff timing, exhaustion
+  test_sources.py          # RSS parsing, content filters, Twitter failover
 ```
 
 ## Adding a New Source
@@ -122,12 +135,28 @@ class MyNotifier(Notifier):
 ## Running Tests
 
 ```bash
-pytest
+# Install dev dependencies (includes pytest + aioresponses)
+pip install -e ".[dev]"
+
+# Run all tests
+pytest -v
+
+# Run a specific test file
+pytest tests/test_pipeline.py -v
 ```
+
+## CI/CD
+
+GitHub Actions runs automatically on pushes to `main` and on pull requests:
+
+- **Lint** — Syntax check all Python files (`py_compile`)
+- **Test** — `pytest` on Python 3.11 and 3.12
+- **Docker Build** — Validates the Docker image builds successfully
 
 ## Pull Requests
 
 1. Fork the repo and create a feature branch
 2. Make your changes
-3. Run tests: `pytest`
+3. Run tests locally: `pytest -v`
 4. Submit a PR with a clear description of what and why
+5. CI must pass before merge
