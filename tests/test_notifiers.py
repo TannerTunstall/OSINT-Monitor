@@ -7,13 +7,15 @@ Why these tests matter:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from aioresponses import aioresponses
 
-from src.config import DiscordConfig, SlackConfig, WebhookConfig, WebhookEndpoint
+from src.config import DiscordConfig, SlackConfig, WebhookConfig, WebhookEndpoint, SignalConfig, WhatsAppConfig, EmailConfig
 from src.notifiers.discord import DiscordNotifier, DISCORD_MAX_LENGTH
 from src.notifiers.slack import SlackNotifier
 from src.notifiers.webhook import WebhookNotifier
+from src.notifiers.signal import SignalNotifier
+from src.notifiers.whatsapp import WhatsAppNotifier
 
 
 class TestDiscordNotifier:
@@ -123,3 +125,78 @@ class TestWebhookNotifier:
             assert result is True
             assert len(m.requests) == 2
         await notifier.close()
+
+
+class TestSignalNotifier:
+    async def test_send_success(self):
+        config = SignalConfig(enabled=True, api_url="http://signal:8080", sender="+1234567890", recipients=["+0987654321"])
+        notifier = SignalNotifier(config)
+        with aioresponses() as m:
+            m.post("http://signal:8080/v2/send", status=200)
+            result = await notifier.send("Test alert")
+            assert result is True
+        await notifier.close()
+
+    async def test_send_failure(self):
+        config = SignalConfig(enabled=True, api_url="http://signal:8080", sender="+1234567890", recipients=["+0987654321"])
+        notifier = SignalNotifier(config)
+        with aioresponses() as m:
+            m.post("http://signal:8080/v2/send", status=400, body="Bad request")
+            result = await notifier.send("Test alert")
+            assert result is False
+        await notifier.close()
+
+    async def test_empty_recipients_returns_true(self):
+        config = SignalConfig(enabled=True, api_url="http://signal:8080", sender="+1234567890", recipients=[])
+        notifier = SignalNotifier(config)
+        result = await notifier.send("Test alert")
+        assert result is True
+        await notifier.close()
+
+
+class TestWhatsAppNotifier:
+    async def test_send_success(self):
+        config = WhatsAppConfig(enabled=True, api_url="http://waha:3000", session_name="default", chat_ids=["123@c.us"])
+        notifier = WhatsAppNotifier(config)
+        with aioresponses() as m:
+            m.post("http://waha:3000/api/sendText", status=200)
+            result = await notifier.send("Test message")
+            assert result is True
+        await notifier.close()
+
+    async def test_send_failure(self):
+        config = WhatsAppConfig(enabled=True, api_url="http://waha:3000", session_name="default", chat_ids=["123@c.us"])
+        notifier = WhatsAppNotifier(config)
+        with aioresponses() as m:
+            m.post("http://waha:3000/api/sendText", status=400, body="Error")
+            result = await notifier.send("Test message")
+            assert result is False
+        await notifier.close()
+
+
+class TestEmailNotifier:
+    async def test_send_success(self):
+        config = EmailConfig(enabled=True, smtp_host="smtp.test.com", smtp_port=587,
+                             from_address="test@test.com", to_addresses=["user@test.com"])
+        from src.notifiers.email import EmailNotifier
+        notifier = EmailNotifier(config)
+        with patch("src.notifiers.email.EmailNotifier._send_email", new_callable=AsyncMock, return_value=True):
+            result = await notifier.send("Test alert")
+            assert result is True
+
+    async def test_smtp_failure_returns_false(self):
+        config = EmailConfig(enabled=True, smtp_host="smtp.test.com", smtp_port=587,
+                             from_address="test@test.com", to_addresses=["user@test.com"])
+        from src.notifiers.email import EmailNotifier
+        notifier = EmailNotifier(config)
+        with patch("src.notifiers.email.EmailNotifier._send_email", new_callable=AsyncMock, side_effect=Exception("SMTP error")):
+            result = await notifier.send("Test alert")
+            assert result is False
+
+    async def test_subject_truncation(self):
+        config = EmailConfig(enabled=True, smtp_host="smtp.test.com", smtp_port=587,
+                             from_address="test@test.com", to_addresses=["a@b.com"],
+                             subject_prefix="[OSINT]")
+        long_text = "a" * 200
+        subject = f"{config.subject_prefix} {long_text[:80]}"
+        assert len(subject) < 100  # subject is capped at prefix + 80 chars
