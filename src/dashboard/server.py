@@ -672,14 +672,19 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
             limit = min(int(request.query.get("limit", "100")), 1000)
         except (ValueError, TypeError):
             limit = 100
+        try:
+            offset = max(int(request.query.get("offset", "0")), 0)
+        except (ValueError, TypeError):
+            offset = 0
         source = request.query.get("source", None)
         if source == "all":
             source = None
+        query = request.query.get("q", "").strip() or None
         db = app.get("db")
         if not db:
-            return web.json_response({"messages": []})
-        messages = await db.get_recent(limit=limit, source=source)
-        return web.json_response({"messages": messages})
+            return web.json_response({"messages": [], "total": 0})
+        messages, total = await db.search(query=query, source=source, limit=limit, offset=offset)
+        return web.json_response({"messages": messages, "total": total})
 
     async def api_export(request):
         """Export messages as JSON or CSV."""

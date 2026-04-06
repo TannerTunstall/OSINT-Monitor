@@ -106,6 +106,49 @@ class MessageDB:
             for r in rows
         ]
 
+    async def search(
+        self,
+        query: str | None = None,
+        source: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """Search messages with optional text query and source filter. Returns (messages, total_count)."""
+        conditions = []
+        params = []
+
+        if source:
+            conditions.append("source = ?")
+            params.append(source)
+        if query:
+            like = f"%{query}%"
+            conditions.append("(content LIKE ? OR author LIKE ? OR translation LIKE ? OR matched_keywords LIKE ?)")
+            params.extend([like, like, like, like])
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        # Get total count
+        count_cursor = await self._db.execute(f"SELECT COUNT(*) FROM messages{where}", params)
+        total = (await count_cursor.fetchone())[0]
+
+        # Get paginated results
+        params.extend([limit, offset])
+        cursor = await self._db.execute(
+            f"SELECT source, source_id, author, content, url, timestamp, created_at, translation, matched_keywords "
+            f"FROM messages{where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params,
+        )
+        rows = await cursor.fetchall()
+        messages = [
+            {
+                "source": r[0], "source_id": r[1], "author": r[2],
+                "content": r[3], "url": r[4], "timestamp": r[5], "created_at": r[6],
+                "translation": r[7], "matched_keywords": r[8],
+            }
+            for r in rows
+        ]
+        return messages, total
+
     async def export(
         self,
         source: str | None = None,

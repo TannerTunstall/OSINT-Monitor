@@ -629,6 +629,19 @@ textarea {
   white-space: pre-wrap;
 }
 
+/* Expandable feed cards */
+.feed-card.expandable { cursor: pointer; }
+.feed-card .feed-full { display: none; }
+.feed-card .feed-short { display: inline; }
+.feed-card.expanded .feed-full { display: inline; }
+.feed-card.expanded .feed-short { display: none; }
+
+.feed-expand-hint {
+  font-size: 11px;
+  color: var(--accent);
+  margin-top: 4px;
+}
+
 .feed-keywords {
   font-size: 12px;
   color: var(--warning, #f59e0b);
