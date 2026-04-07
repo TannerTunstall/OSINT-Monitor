@@ -21,13 +21,11 @@ async function api(method, path, body) {
     const res = await fetch('/api/' + path, opts);
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
-      console.error('API error', method, path, res.status, err);
       if (err.errors) toast(err.errors[0], 'error');
       return null;
     }
     return await res.json();
   } catch (e) {
-    console.error('API fetch error', method, path, e);
     toast('Network error — check your connection', 'error');
     return null;
   }
