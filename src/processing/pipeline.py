@@ -238,7 +238,7 @@ class Pipeline:
             timestamp=msg.timestamp,
         )
 
-    async def process(self, msg: Message):
+    async def process(self, msg: Message) -> bool:
         is_new = await self.db.insert_if_new(
             source=msg.source,
             source_id=msg.source_id,
@@ -248,7 +248,7 @@ class Pipeline:
             timestamp=msg.timestamp,
         )
         if not is_new:
-            return
+            return False
 
         # Log the new message
         preview = (msg.content or "")[:80].replace("\n", " ")
@@ -266,11 +266,11 @@ class Pipeline:
         filter_text = translation or content
         passes, matched_keywords = self._check_keywords(msg.source, filter_text, msg.source_id)
         if not passes:
-            return
+            return True
 
         # Step 3: Content similarity dedup (skip for test messages)
         if not msg.source_id.startswith("test-") and self._is_duplicate_content(filter_text, msg.source_id, msg.author or "unknown"):
-            return
+            return True
 
         # Store matched keywords alongside translation
         if matched_keywords:
@@ -302,6 +302,7 @@ class Pipeline:
                     h = self.health.get(name.replace("Notifier", ""))
                     if h:
                         h.record_error(str(exc))
+        return True
 
     async def close(self):
         if self._translate_session and not self._translate_session.closed:

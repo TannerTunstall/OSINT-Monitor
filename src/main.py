@@ -39,9 +39,11 @@ async def run_polling_source(
     while True:
         try:
             messages = await source.poll()
+            new_count = 0
             for msg in messages:
-                await pipeline.process(msg)
-            health.record_success(len(messages))
+                if await pipeline.process(msg):
+                    new_count += 1
+            health.record_success(new_count)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
