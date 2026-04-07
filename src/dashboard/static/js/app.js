@@ -1039,6 +1039,7 @@ async function loadAnalytics() {
         <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Source types seen</span><span>${srcCount}</span></div>
         <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Retention</span><span>${_lastLoadedConfig?.database?.retention_days || 90} days</span></div>
         <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Uptime</span><span>${upHrs}h ${upMin}m</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Version</span><span id="version-hash" style="font-family:'Fira Code',monospace;font-size:11px;color:var(--text2)">—</span></div>
         <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:8px;margin-top:4px">
           <button class="btn btn-sm btn-outline" onclick="exportData('csv')" style="flex:1">Export CSV</button>
           <button class="btn btn-sm btn-outline" onclick="exportData('json')" style="flex:1;margin-left:6px">Export JSON</button>
@@ -1056,6 +1057,13 @@ async function loadAnalytics() {
 
   // Recent activity feed (last 10 messages)
   await loadDashboardFeed();
+
+  // Load version hash
+  const versionEl = document.getElementById('version-hash');
+  if (versionEl && versionEl.textContent === '—') {
+    const vData = await api('GET', 'update/check');
+    if (vData && vData.local_commit) versionEl.textContent = vData.local_commit;
+  }
 }
 
 async function loadDashboardFeed() {

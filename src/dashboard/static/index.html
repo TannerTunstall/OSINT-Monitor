@@ -218,14 +218,14 @@
   <div class="tab-content" id="tab-feed">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <div class="filter-bar" style="margin:0">
-        <button class="btn btn-sm btn-outline active" data-filter="all" onclick="setFeedSource('all')">All</button>
-        <button class="btn btn-sm btn-outline" data-filter="telegram" onclick="setFeedSource('telegram')">Telegram</button>
-        <button class="btn btn-sm btn-outline" data-filter="twitter" onclick="setFeedSource('twitter')">Twitter</button>
-        <button class="btn btn-sm btn-outline" data-filter="rss" onclick="setFeedSource('rss')">RSS</button>
-        <button class="btn btn-sm btn-outline" data-filter="radar" onclick="setFeedSource('radar')">Radar</button>
+        <button class="btn btn-sm btn-outline active" data-filter="all" aria-label="Show all sources" onclick="setFeedSource('all')">All</button>
+        <button class="btn btn-sm btn-outline" data-filter="telegram" aria-label="Filter Telegram" onclick="setFeedSource('telegram')">Telegram</button>
+        <button class="btn btn-sm btn-outline" data-filter="twitter" aria-label="Filter Twitter" onclick="setFeedSource('twitter')">Twitter</button>
+        <button class="btn btn-sm btn-outline" data-filter="rss" aria-label="Filter RSS" onclick="setFeedSource('rss')">RSS</button>
+        <button class="btn btn-sm btn-outline" data-filter="radar" aria-label="Filter Radar" onclick="setFeedSource('radar')">Radar</button>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
-        <input type="text" id="feed-search" placeholder="Search all messages..." aria-label="Search messages" style="width:220px;padding:5px 10px;font-size:12px" oninput="feedSearch()">
+        <input type="search" id="feed-search" placeholder="Search all messages..." aria-label="Search messages" style="width:220px;padding:5px 10px;font-size:12px" oninput="feedSearch()">
         <button class="btn btn-sm btn-outline" onclick="exportData('csv')">CSV</button>
         <button class="btn btn-sm btn-outline" onclick="exportData('json')">JSON</button>
         <button class="btn btn-sm btn-outline" onclick="loadFeed()">Refresh</button>
