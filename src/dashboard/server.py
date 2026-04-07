@@ -853,57 +853,178 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
         return exit_code, logs
 
     async def api_update_apply(request):
-        """Pull latest code from GitHub and rebuild the container."""
+        """Safely update: backup config, clone fresh into /tmp, copy source files, verify, rebuild.
+
+        Safety: git never runs in the project directory. Config and data are never touched.
+        """
         if _update_state["in_progress"]:
             return web.json_response({"error": "Update already in progress"}, status=409)
         _update_state["in_progress"] = True
 
         try:
+            import re as _re_update
             async with aiohttp.ClientSession(connector=aiohttp.UnixConnector(path="/var/run/docker.sock")) as docker:
                 # Find host project path
                 async with docker.get("http://localhost/containers/osint-monitor/json") as resp:
                     if resp.status != 200:
+                        _update_state["in_progress"] = False
                         return web.json_response({"error": "Cannot inspect container"}, status=500)
                     host_path = _get_host_project_path(await resp.json())
 
                 if not host_path:
+                    _update_state["in_progress"] = False
                     return web.json_response({"error": "Cannot determine host project path"}, status=500)
 
                 logger.info("Update: host path = %s", host_path)
 
-                # Phase 1: Git pull via alpine/git
-                logger.info("Update: pulling latest code...")
-                git_cmd = (
-                    'OWNER=$(stat -c "%u:%g" /repo 2>/dev/null || stat -f "%u:%g" /repo) && '
-                    'git config --global --add safe.directory /repo && '
-                    'git fetch origin main && '
-                    'git reset --hard origin/main && '
-                    'chown -R $OWNER /repo && '
-                    'git rev-parse HEAD'
+                # ── Step 1: Pre-flight backup ──────────────────
+                logger.info("Update: backing up config files...")
+                preflight_cmd = (
+                    'set -e; '
+                    'if [ ! -f /repo/config.yaml ]; then echo "ABORT: config.yaml missing or is a directory" >&2; exit 1; fi; '
+                    'if [ ! -f /repo/.env ]; then echo "ABORT: .env missing or is a directory" >&2; exit 1; fi; '
+                    'TIMESTAMP=$(date +%Y%m%d_%H%M%S); '
+                    'BACKUP_DIR="/repo/backups/${TIMESTAMP}"; '
+                    'mkdir -p "$BACKUP_DIR"; '
+                    'cp -p /repo/config.yaml "$BACKUP_DIR/config.yaml"; '
+                    'cp -p /repo/.env "$BACKUP_DIR/.env"; '
+                    'echo "$BACKUP_DIR" > /repo/backups/.latest; '
+                    'cd /repo/backups && ls -dt */ 2>/dev/null | tail -n +6 | xargs rm -rf 2>/dev/null; '
+                    'echo "PREFLIGHT_OK"'
                 )
-                exit_code, logs = await _create_and_run_container(docker, "osint-updater", {
-                    "Image": "alpine/git",
-                    "Entrypoint": ["sh"],
-                    "Cmd": ["-c", git_cmd],
-                    "WorkingDir": "/repo",
+                exit_code, logs = await _create_and_run_container(docker, "osint-preflight", {
+                    "Image": "alpine:latest",
+                    "Cmd": ["sh", "-c", preflight_cmd],
                     "HostConfig": {"Binds": [f"{host_path}:/repo"]},
                 })
+                if exit_code != 0 or "PREFLIGHT_OK" not in logs:
+                    _update_state["in_progress"] = False
+                    return web.json_response({
+                        "error": f"Pre-flight check failed — update aborted. Your files are untouched.\n{logs[-500:]}"
+                    }, status=500)
 
+                logger.info("Update: backup complete")
+
+                # ── Step 2: Fresh clone into /tmp ──────────────
+                logger.info("Update: cloning latest code from GitHub...")
+                clone_cmd = (
+                    'set -e; '
+                    'TMPDIR="/hostmnt/tmp/osint-update-$$"; '
+                    'mkdir -p "$TMPDIR"; '
+                    f'git clone --depth 1 --branch main https://github.com/{GITHUB_REPO}.git "$TMPDIR/repo"; '
+                    'git -C "$TMPDIR/repo" rev-parse HEAD; '
+                    'echo "CLONE_DIR=$TMPDIR"'
+                )
+                exit_code, logs = await _create_and_run_container(docker, "osint-cloner", {
+                    "Image": "alpine/git",
+                    "Entrypoint": ["sh"],
+                    "Cmd": ["-c", clone_cmd],
+                    "HostConfig": {"Binds": ["/tmp:/hostmnt/tmp"]},
+                }, timeout=120)
                 if exit_code != 0:
                     _update_state["in_progress"] = False
-                    return web.json_response({"error": f"Git pull failed:\n{logs[-500:]}"}, status=500)
+                    return web.json_response({"error": f"Git clone failed:\n{logs[-500:]}"}, status=500)
 
-                # Extract new commit hash — find 40-char hex string in logs
-                import re as _re_commit
-                commit_match = _re_commit.search(r'\b([0-9a-f]{40})\b', logs)
+                commit_match = _re_update.search(r'\b([0-9a-f]{40})\b', logs)
                 new_commit = commit_match.group(1) if commit_match else "unknown"
-                logger.info("Update: pulled to commit %s", new_commit[:12])
+                dir_match = _re_update.search(r'CLONE_DIR=(.+)', logs)
+                clone_dir = dir_match.group(1).strip() if dir_match else None
 
-                # Phase 2: Rebuild via docker:cli
-                # Use the host directory basename as compose project name
-                # (e.g., /opt/osint-monitor → "osint-monitor") to match the original stack
+                if not clone_dir:
+                    _update_state["in_progress"] = False
+                    return web.json_response({"error": "Could not determine clone directory"}, status=500)
+
+                # Container path /hostmnt/tmp/... → host path /tmp/...
+                host_clone_dir = clone_dir.replace("/hostmnt/tmp", "/tmp")
+                logger.info("Update: cloned commit %s to %s", new_commit[:12], host_clone_dir)
+
+                # ── Step 3: Copy source files only ─────────────
+                logger.info("Update: copying source files (config/data untouched)...")
+                overlay_cmd = (
+                    'set -e; '
+                    'CLONE="/clone/repo"; '
+                    'DEST="/repo"; '
+                    'rm -rf "$DEST/src" && cp -r "$CLONE/src" "$DEST/src"; '
+                    'rm -rf "$DEST/tests" && cp -r "$CLONE/tests" "$DEST/tests" 2>/dev/null || true; '
+                    'cp "$CLONE/Dockerfile" "$DEST/Dockerfile"; '
+                    'cp "$CLONE/docker-compose.yml" "$DEST/docker-compose.yml"; '
+                    'cp "$CLONE/docker-entrypoint.sh" "$DEST/docker-entrypoint.sh"; '
+                    'cp "$CLONE/requirements.txt" "$DEST/requirements.txt"; '
+                    'cp "$CLONE/setup.sh" "$DEST/setup.sh" 2>/dev/null || true; '
+                    'cp "$CLONE/pyproject.toml" "$DEST/pyproject.toml" 2>/dev/null || true; '
+                    'cp "$CLONE/.gitignore" "$DEST/.gitignore" 2>/dev/null || true; '
+                    'cp "$CLONE/README.md" "$DEST/README.md" 2>/dev/null || true; '
+                    'cp "$CLONE/CONTRIBUTING.md" "$DEST/CONTRIBUTING.md" 2>/dev/null || true; '
+                    'cp "$CLONE/LICENSE" "$DEST/LICENSE" 2>/dev/null || true; '
+                    'if [ -d "$CLONE/docs" ]; then rm -rf "$DEST/docs" && cp -r "$CLONE/docs" "$DEST/docs"; fi; '
+                    'if [ -d "$CLONE/.github" ]; then rm -rf "$DEST/.github" && cp -r "$CLONE/.github" "$DEST/.github"; fi; '
+                    'OWNER=$(stat -c "%u:%g" /repo 2>/dev/null || stat -f "%u:%g" /repo); '
+                    'chown -R $OWNER "$DEST/src" "$DEST/Dockerfile" "$DEST/docker-compose.yml" '
+                    '  "$DEST/docker-entrypoint.sh" "$DEST/requirements.txt" 2>/dev/null || true; '
+                    'echo "OVERLAY_OK"'
+                )
+                exit_code, logs = await _create_and_run_container(docker, "osint-overlay", {
+                    "Image": "alpine:latest",
+                    "Cmd": ["sh", "-c", overlay_cmd],
+                    "HostConfig": {
+                        "Binds": [
+                            f"{host_clone_dir}:/clone:ro",
+                            f"{host_path}:/repo",
+                        ],
+                    },
+                })
+                if exit_code != 0 or "OVERLAY_OK" not in logs:
+                    _update_state["in_progress"] = False
+                    return web.json_response({"error": f"File copy failed:\n{logs[-500:]}"}, status=500)
+
+                # ── Step 4: Post-flight verification ───────────
+                logger.info("Update: verifying config files...")
+                verify_cmd = (
+                    'set -e; '
+                    'BACKUP_DIR=$(cat /repo/backups/.latest 2>/dev/null); '
+                    'if [ ! -f /repo/config.yaml ]; then '
+                    '  echo "CRITICAL: config.yaml missing — restoring from backup"; '
+                    '  if [ -n "$BACKUP_DIR" ] && [ -f "$BACKUP_DIR/config.yaml" ]; then '
+                    '    rm -rf /repo/config.yaml 2>/dev/null || true; '
+                    '    cp -p "$BACKUP_DIR/config.yaml" /repo/config.yaml; '
+                    '  else echo "FATAL: no backup available" >&2; exit 1; fi; '
+                    'fi; '
+                    'if [ ! -f /repo/.env ]; then '
+                    '  echo "CRITICAL: .env missing — restoring from backup"; '
+                    '  if [ -n "$BACKUP_DIR" ] && [ -f "$BACKUP_DIR/.env" ]; then '
+                    '    rm -rf /repo/.env 2>/dev/null || true; '
+                    '    cp -p "$BACKUP_DIR/.env" /repo/.env; '
+                    '  else echo "FATAL: no backup available" >&2; exit 1; fi; '
+                    'fi; '
+                    'if [ ! -s /repo/config.yaml ] && [ -n "$BACKUP_DIR" ] && [ -s "$BACKUP_DIR/config.yaml" ]; then '
+                    '  cp -p "$BACKUP_DIR/config.yaml" /repo/config.yaml; '
+                    '  echo "Restored empty config.yaml from backup"; '
+                    'fi; '
+                    'echo "VERIFY_OK"'
+                )
+                exit_code, logs = await _create_and_run_container(docker, "osint-verify", {
+                    "Image": "alpine:latest",
+                    "Cmd": ["sh", "-c", verify_cmd],
+                    "HostConfig": {"Binds": [f"{host_path}:/repo"]},
+                })
+                if exit_code != 0 or "VERIFY_OK" not in logs:
+                    _update_state["in_progress"] = False
+                    return web.json_response({
+                        "error": f"Post-update verification failed. Config restored from backup.\n{logs[-500:]}"
+                    }, status=500)
+
+                logger.info("Update: verification passed")
+
+                # ── Step 5: Cleanup temp clone ─────────────────
+                await _create_and_run_container(docker, "osint-cleanup", {
+                    "Image": "alpine:latest",
+                    "Cmd": ["sh", "-c", "rm -rf /hostmnt/tmp/osint-update-*"],
+                    "HostConfig": {"Binds": ["/tmp:/hostmnt/tmp"]},
+                })
+
+                # ── Step 6: Rebuild container ──────────────────
                 project_name = Path(host_path).name
-                logger.info("Update: creating rebuild container (project: %s)...", project_name)
+                logger.info("Update: rebuilding container (project: %s)...", project_name)
                 rebuild_config = {
                     "Image": "docker:cli",
                     "Cmd": ["sh", "-c",
@@ -918,7 +1039,6 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
                     },
                 }
 
-                # Ensure rebuild image exists, then create container
                 await _ensure_image(docker, "docker:cli")
                 await docker.delete("http://localhost/containers/osint-rebuilder?force=true")
                 await asyncio.sleep(0.5)
@@ -931,7 +1051,7 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
 
                 # Schedule rebuilder start AFTER response is sent
                 async def _start_rebuilder():
-                    await asyncio.sleep(1)  # Let HTTP response flush
+                    await asyncio.sleep(1)
                     try:
                         async with aiohttp.ClientSession(
                             connector=aiohttp.UnixConnector(path="/var/run/docker.sock")
@@ -945,7 +1065,7 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
 
                 return web.json_response({
                     "status": "updating",
-                    "message": "Code pulled. Rebuilding container...",
+                    "message": "Code updated safely. Rebuilding container...",
                     "new_commit": new_commit[:12],
                 })
 

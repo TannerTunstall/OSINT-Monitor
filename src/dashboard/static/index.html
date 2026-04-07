@@ -484,9 +484,13 @@
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;max-width:400px;width:100%">
     <h2 style="font-size:18px;margin-bottom:20px;text-align:center">Updating OSINT Monitor</h2>
     <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="update-step pending" id="step-backup">
+        <span class="step-icon">&bull;</span>
+        <span>Backing up configuration</span>
+      </div>
       <div class="update-step pending" id="step-pull">
         <span class="step-icon">&bull;</span>
-        <span>Pulling latest code from GitHub</span>
+        <span>Downloading latest code</span>
       </div>
       <div class="update-step pending" id="step-build">
         <span class="step-icon">&bull;</span>

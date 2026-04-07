@@ -157,6 +157,7 @@ $COMPOSE up -d --build
 
 # Pre-pull helper images for in-app updates
 info "Pre-pulling update helper images..."
+docker pull alpine:latest >/dev/null 2>&1 &
 docker pull alpine/git:latest >/dev/null 2>&1 &
 docker pull docker:cli >/dev/null 2>&1 &
 wait
