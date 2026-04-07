@@ -434,15 +434,14 @@ async function applyUpdate() {
   updateStep('step-pull', 'done');
   updateStep('step-build', 'active');
 
-  // Poll for the container to come back with new version
+  // Poll for the container to come back fully ready
   const startTime = Date.now();
   const maxWait = 300000; // 5 minutes
-  let buildShown = false;
+  let phase = 'building'; // building → restarting → ready
 
   const poll = setInterval(async () => {
     if (Date.now() - startTime > maxWait) {
       clearInterval(poll);
-      updateStep('step-build', 'error');
       const errEl = document.getElementById('update-error');
       errEl.textContent = 'Update is taking longer than expected. Check Docker logs on the host.';
       errEl.classList.remove('hidden');
@@ -450,25 +449,33 @@ async function applyUpdate() {
     }
 
     try {
-      const resp = await fetch('/api/health');
-      if (resp.ok) {
-        if (!buildShown) {
+      if (phase === 'building') {
+        // Wait for health endpoint to respond (server is up)
+        const resp = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
+        if (resp.ok) {
           updateStep('step-build', 'done');
           updateStep('step-restart', 'active');
-          buildShown = true;
+          phase = 'restarting';
         }
-        // App is back — wait a moment then mark done
-        clearInterval(poll);
-        updateStep('step-restart', 'done');
-        updateStep('step-done', 'done');
-        setTimeout(() => location.reload(), 3000);
+      } else if (phase === 'restarting') {
+        // Wait for analytics to return data (app fully initialized)
+        const resp = await fetch('/api/analytics', { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) {
+          const d = await resp.json();
+          if (d && typeof d.total === 'number') {
+            clearInterval(poll);
+            updateStep('step-restart', 'done');
+            updateStep('step-done', 'done');
+            setTimeout(() => location.reload(), 2000);
+          }
+        }
       }
     } catch (e) {
-      // Connection refused = container is restarting, expected
-      if (!buildShown && Date.now() - startTime > 10000) {
+      // Connection refused or timeout = still restarting, expected
+      if (phase === 'building' && Date.now() - startTime > 10000) {
         updateStep('step-build', 'done');
         updateStep('step-restart', 'active');
-        buildShown = true;
+        phase = 'restarting';
       }
     }
   }, 3000);
@@ -764,16 +771,30 @@ async function saveAndRestart(section) {
   overlay.classList.remove('hidden');
 
   let attempts = 0;
+  let healthUp = false;
   const maxAttempts = 30; // 60 seconds max
   const poll = setInterval(async () => {
     attempts++;
     try {
-      const resp = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
-      if (resp.ok) {
-        clearInterval(poll);
-        title.textContent = 'Back online!';
-        subtitle.textContent = 'Reloading...';
-        setTimeout(() => location.reload(), 500);
+      if (!healthUp) {
+        const resp = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
+        if (resp.ok) {
+          healthUp = true;
+          subtitle.textContent = 'Waiting for services to initialize...';
+        }
+      } else {
+        // Health is up — wait for analytics (full init) before reloading
+        const resp = await fetch('/api/analytics', { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) {
+          const d = await resp.json();
+          if (d && typeof d.total === 'number') {
+            clearInterval(poll);
+            title.textContent = 'Back online!';
+            subtitle.textContent = 'Reloading...';
+            setTimeout(() => location.reload(), 1000);
+            return;
+          }
+        }
       }
     } catch (e) {
       // Still restarting
