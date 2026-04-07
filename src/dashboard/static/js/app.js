@@ -196,6 +196,9 @@ async function loadLogs() {
     return `<div class="${c}">${esc(l)}</div>`;
   }).join('');
   v.scrollTop = v.scrollHeight;
+
+  const countEl = document.getElementById('log-count');
+  if (countEl) countEl.textContent = `${lines.length} of ${data.lines.length} lines`;
 }
 
 function setLogFilter(f) {
