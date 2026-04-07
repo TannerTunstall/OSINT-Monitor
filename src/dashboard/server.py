@@ -1023,17 +1023,22 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
                 })
 
                 # ── Step 6: Rebuild container ──────────────────
+                # CRITICAL: Mount the host project at its REAL host path, not /repo.
+                # docker compose resolves relative volume paths (./config.yaml) from the
+                # compose file's directory. The Docker daemon then looks for those paths
+                # on the HOST filesystem. If we mount at /repo, compose sends /repo/config.yaml
+                # to the daemon, which doesn't exist on the host → Docker creates a directory.
                 project_name = Path(host_path).name
-                logger.info("Update: rebuilding container (project: %s)...", project_name)
+                logger.info("Update: rebuilding container (project: %s, path: %s)...", project_name, host_path)
                 rebuild_config = {
                     "Image": "docker:cli",
                     "Cmd": ["sh", "-c",
-                            f"docker compose -p {project_name} -f /repo/docker-compose.yml up -d --build osint-monitor"],
-                    "WorkingDir": "/repo",
+                            f"docker compose -p {project_name} -f {host_path}/docker-compose.yml up -d --build osint-monitor"],
+                    "WorkingDir": host_path,
                     "Env": [f"GIT_COMMIT={new_commit}"],
                     "HostConfig": {
                         "Binds": [
-                            f"{host_path}:/repo",
+                            f"{host_path}:{host_path}",
                             "/var/run/docker.sock:/var/run/docker.sock",
                         ],
                     },
