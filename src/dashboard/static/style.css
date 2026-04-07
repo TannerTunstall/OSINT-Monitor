@@ -89,19 +89,24 @@ body {
 
 .status-bar {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px;
-  margin-bottom: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.status-bar.connector-bar {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  margin-bottom: 24px;
 }
 
 .status-chip {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 10px 14px;
+  padding: 14px 16px;
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 12px;
   transition: border-color var(--transition);
 }
 
@@ -109,20 +114,37 @@ body {
   border-color: var(--text2);
 }
 
+/* KPI cards — hero numbers */
+.status-chip .value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.status-chip .meta {
+  font-size: 11px;
+  color: var(--text2);
+  font-family: 'Fira Code', monospace;
+  margin-top: 2px;
+}
+
+/* Connector chips — smaller, detail-focused */
+.connector-bar .status-chip .value {
+  font-size: 14px;
+  font-weight: 500;
+}
+
 .dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-top: 5px;
+  margin-top: 8px;
 }
 
 .dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .dot.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
 .dot.gray { background: var(--text2); }
-
-.status-chip .value { font-size: 13px; font-weight: 500; }
-.status-chip .meta { font-size: 11px; color: var(--text2); font-family: 'Fira Code', monospace; }
 
 /* ── Tabs ────────────────────────────────────────────── */
 
@@ -164,8 +186,8 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 18px;
-  margin-bottom: 14px;
+  padding: 16px;
+  margin-bottom: 0;
   transition: border-color var(--transition);
   overflow: hidden;
 }
@@ -181,7 +203,7 @@ body {
   gap: 8px;
 }
 
-.card-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.card-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .card-row > .card { flex: 1; min-width: 280px; min-height: 0; overflow: hidden; }
 
 /* ── Forms ───────────────────────────────────────────── */
