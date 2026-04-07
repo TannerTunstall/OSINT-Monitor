@@ -900,11 +900,14 @@ def create_dashboard(health: HealthRegistry, notifiers: list, restart_callback=N
                 logger.info("Update: pulled to commit %s", new_commit[:12])
 
                 # Phase 2: Rebuild via docker:cli
-                logger.info("Update: creating rebuild container...")
+                # Use the host directory basename as compose project name
+                # (e.g., /opt/osint-monitor → "osint-monitor") to match the original stack
+                project_name = Path(host_path).name
+                logger.info("Update: creating rebuild container (project: %s)...", project_name)
                 rebuild_config = {
                     "Image": "docker:cli",
                     "Cmd": ["sh", "-c",
-                            f"docker compose -f /repo/docker-compose.yml up -d --build osint-monitor"],
+                            f"docker compose -p {project_name} -f /repo/docker-compose.yml up -d --build osint-monitor"],
                     "WorkingDir": "/repo",
                     "Env": [f"GIT_COMMIT={new_commit}"],
                     "HostConfig": {
