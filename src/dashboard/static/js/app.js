@@ -275,8 +275,8 @@ function renderFeedMessages(append) {
 
   if (!_feedMessages.length) {
     el.innerHTML = _feedQuery
-      ? '<div class="feed-empty">No messages match your search.</div>'
-      : '<div class="feed-empty">No messages yet.<br>Once sources are configured and polling, messages will appear here.</div>';
+      ? '<div class="feed-empty">No messages match your search. Try a different term or clear the search field.</div>'
+      : '<div class="feed-empty">No messages yet.<br>Configure sources in the <a href="#" onclick="switchTab(\'sources\');return false" style="color:var(--accent)">Sources tab</a>, then check back in a few minutes.</div>';
     return;
   }
 
@@ -924,6 +924,10 @@ async function loadAnalytics() {
   const data = await api('GET', 'analytics');
   if (!data) return;
   _analyticsData = data;
+
+  // Show last refresh time
+  const refreshEl = document.getElementById('dashboard-last-refresh');
+  if (refreshEl) refreshEl.textContent = `Last refreshed: ${new Date().toLocaleTimeString()}`;
 
   const health = data.health || {};
   const upHrs = Math.floor((health.uptime_seconds || 0) / 3600);
