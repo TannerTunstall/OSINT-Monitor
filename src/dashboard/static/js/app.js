@@ -957,16 +957,17 @@ async function loadAnalytics() {
   const upHrs = Math.floor((health.uptime_seconds || 0) / 3600);
   const upMin = Math.floor(((health.uptime_seconds || 0) % 3600) / 60);
 
-  // KPI summary cards
+  // KPI summary cards — hero numbers, dots only for status indicators
   const lastMsg = data.last_message_at ? data.last_message_at.substring(11, 16) + ' UTC' : 'none';
   const sourceCount = (health.connectors || []).filter(c => c.type === 'source').length;
+  const allHealthy = health.connectors_healthy === health.connectors_total;
   document.getElementById('analytics-summary').innerHTML = `
-    <div class="status-chip"><div class="dot green"></div><div><div class="value">${data.today || 0}</div><div class="meta">Messages today</div></div></div>
-    <div class="status-chip"><div class="dot green"></div><div><div class="value">${data.this_week || 0}</div><div class="meta">This week</div></div></div>
-    <div class="status-chip"><div class="dot ${sourceCount > 0 ? 'green' : 'gray'}"></div><div><div class="value">${sourceCount}</div><div class="meta">Sources active</div></div></div>
-    <div class="status-chip"><div class="dot ${health.connectors_healthy === health.connectors_total ? 'green' : 'red'}"></div><div><div class="value">${health.connectors_healthy || 0}/${health.connectors_total || 0}</div><div class="meta">Connectors</div></div></div>
-    <div class="status-chip"><div class="dot green"></div><div><div class="value">${upHrs}h ${upMin}m</div><div class="meta">Uptime</div></div></div>
-    <div class="status-chip"><div class="dot green"></div><div><div class="value">${lastMsg}</div><div class="meta">Last message</div></div></div>
+    <div class="status-chip"><div><div class="value">${data.today || 0}</div><div class="meta">Messages today</div></div></div>
+    <div class="status-chip"><div><div class="value">${data.this_week || 0}</div><div class="meta">This week</div></div></div>
+    <div class="status-chip"><div><div class="value">${sourceCount}</div><div class="meta">Sources active</div></div></div>
+    <div class="status-chip"><div class="dot ${allHealthy ? 'green' : 'red'}"></div><div><div class="value">${health.connectors_healthy || 0}/${health.connectors_total || 0}</div><div class="meta">Connectors</div></div></div>
+    <div class="status-chip"><div><div class="value">${upHrs}h ${upMin}m</div><div class="meta">Uptime</div></div></div>
+    <div class="status-chip"><div><div class="value">${lastMsg}</div><div class="meta">Last message</div></div></div>
   `;
 
   // Connector health bar
@@ -1069,19 +1070,15 @@ async function loadAnalytics() {
     authorsEl.innerHTML = '<div style="color:var(--text2);padding:20px;text-align:center">No data yet. <a href="#" onclick="switchTab(\'sources\');return false" style="color:var(--accent)">Add sources</a> to start monitoring.</div>';
   }
 
-  // System info
+  // System info — only show what's not already in KPIs
   const sysEl = document.getElementById('dashboard-system');
   if (sysEl) {
-    const srcCount = Object.keys(data.by_source || {}).length;
     const notifierCount = connectors.filter(c => c.type === 'notifier').length;
-    const sourceCount = connectors.filter(c => c.type === 'source').length;
     sysEl.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Sources active</span><span>${sourceCount}</span></div>
-        <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Notifiers active</span><span>${notifierCount}</span></div>
-        <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Source types seen</span><span>${srcCount}</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Notifiers</span><span>${notifierCount} active</span></div>
         <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Retention</span><span>${_lastLoadedConfig?.database?.retention_days || 90} days</span></div>
-        <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Uptime</span><span>${upHrs}h ${upMin}m</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Messages</span><span>${data.total || 0} total</span></div>
         <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Version</span><span id="version-hash" style="font-family:'Fira Code',monospace;font-size:11px;color:var(--text2)">—</span></div>
         <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:8px;margin-top:4px">
           <button class="btn btn-sm btn-outline" onclick="exportData('csv')" style="flex:1">Export CSV</button>
