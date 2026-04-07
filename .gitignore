@@ -14,6 +14,7 @@ config.yaml
 # Runtime data (Docker volumes)
 data/
 logs/
+backups/
 *.log
 session/
 telegram_session/

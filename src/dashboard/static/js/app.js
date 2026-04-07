@@ -397,7 +397,8 @@ async function applyUpdate() {
   // Show update modal
   const modal = document.getElementById('update-modal');
   modal.classList.remove('hidden');
-  updateStep('step-pull', 'active');
+  updateStep('step-backup', 'active');
+  updateStep('step-pull', 'pending');
   updateStep('step-build', 'pending');
   updateStep('step-restart', 'pending');
   updateStep('step-done', 'pending');
@@ -405,14 +406,28 @@ async function applyUpdate() {
 
   const data = await api('POST', 'update/apply');
   if (!data || data.error) {
-    updateStep('step-pull', 'error');
+    // Determine which step failed from error message
+    const err = data?.error || 'Update failed';
+    if (err.includes('Pre-flight')) {
+      updateStep('step-backup', 'error');
+    } else if (err.includes('clone') || err.includes('Clone')) {
+      updateStep('step-backup', 'done');
+      updateStep('step-pull', 'error');
+    } else if (err.includes('copy') || err.includes('overlay') || err.includes('File')) {
+      updateStep('step-backup', 'done');
+      updateStep('step-pull', 'done');
+      updateStep('step-build', 'error');
+    } else {
+      updateStep('step-backup', 'error');
+    }
     const errEl = document.getElementById('update-error');
-    errEl.textContent = data?.error || 'Update failed';
+    errEl.textContent = err;
     errEl.classList.remove('hidden');
     return;
   }
 
-  // Pull succeeded, now rebuilding
+  // All safe steps passed, now rebuilding
+  updateStep('step-backup', 'done');
   updateStep('step-pull', 'done');
   updateStep('step-build', 'active');
 
