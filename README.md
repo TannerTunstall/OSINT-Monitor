@@ -147,7 +147,7 @@ Monitors internet traffic anomalies and cloud provider outages worldwide.
 1. Get a free API token from [Cloudflare Dashboard](https://dash.cloudflare.com) > My Profile > API Tokens
 2. Enter the token in the **Credentials** tab under **Cloudflare Radar API Token**
 3. Go to **Sources** tab, toggle **Cloudflare Radar** on
-4. Add countries to monitor using ISO codes (e.g., `US:United States`, `DE:Germany`)
+4. Add countries to monitor — type a country name in the autocomplete dropdown to add it
 5. Leave countries empty to monitor global cloud outages only
 6. Click **Save & Restart**
 
@@ -239,7 +239,7 @@ The default payload is `{"message": "..."}`. For custom headers (like auth token
 
 OSINT Monitor uses [LibreTranslate](https://github.com/LibreTranslate/LibreTranslate) (self-hosted, no API keys) for automatic translation.
 
-- Automatically detects the source language via LibreTranslate and translates when it differs from your target language
+- Detects the source language via LibreTranslate's `/detect` endpoint and translates when it differs from your target language. Falls back to character-based detection if the API is unreachable
 - Original text is preserved below the translation in alerts
 - Language models download on first start (takes a few minutes)
 
@@ -271,7 +271,7 @@ OSINT Monitor uses [LibreTranslate](https://github.com/LibreTranslate/LibreTrans
 
 ### Processing Pipeline
 - **Deduplication** — SQLite primary key dedup + Jaccard content similarity check.
-- **Translation** — Auto-detects non-target-language text via LibreTranslate. Any language pair supported.
+- **Translation** — Detects source language via LibreTranslate `/detect` endpoint with character-heuristic fallback. Any language pair supported. Translations stored in DB and included in exports.
 - **Keyword Filtering** — Global include/exclude rules plus per-source overrides. Matched keywords flagged in alerts.
 - **Formatting** — Structured alerts with source tag, author, content, keywords, URL, and timestamp.
 
@@ -279,7 +279,7 @@ OSINT Monitor uses [LibreTranslate](https://github.com/LibreTranslate/LibreTrans
 - **Dashboard** — KPI cards, message volume charts (24h/7d/30d), source breakdown, connector health, recent activity feed.
 - **Sources** — Configure sources, polling intervals, translation, Radar countries, retention, log level.
 - **Delivery** — Configure all 6 notification channels. Inline WhatsApp QR pairing. Test messages through the full pipeline.
-- **Feed** — Browse and search cached messages. Export as CSV or JSON.
+- **Feed** — Server-side search across all messages with pagination. Expandable cards for long content. Filter by source. Export as CSV or JSON.
 - **Filters** — Keyword include/exclude rules, global and per-source.
 - **Credentials** — All API keys, SMTP credentials, tokens. Values masked.
 - **Logs** — Live color-coded log viewer with source/severity filters.
@@ -291,6 +291,8 @@ OSINT Monitor uses [LibreTranslate](https://github.com/LibreTranslate/LibreTrans
 - **Smart restart** — Full-screen overlay with auto-reconnect polling.
 - **Seed on startup** — Existing messages recorded without triggering alerts.
 - **Log rotation** — 10MB per file, 5 backups.
+- **In-app updates** — Check for updates and apply from the dashboard. Pulls from GitHub, rebuilds the container, and restarts without touching config or data.
+- **Version tracking** — Current commit hash displayed in the dashboard System panel.
 
 ## System Requirements
 
@@ -352,6 +354,17 @@ docker compose down                    # Stop everything
 docker compose up -d                   # Start everything
 docker compose up -d --build           # Rebuild after code changes
 ```
+
+### Updating
+
+The dashboard has a built-in update checker (Dashboard tab > System panel > Check for updates). For manual updates:
+
+```bash
+git fetch origin main && git reset --hard origin/main && \
+  GIT_COMMIT=$(git rev-parse HEAD) docker compose up -d --build osint-monitor
+```
+
+Your `config.yaml`, `.env`, and `data/` are bind-mounted and never modified by updates.
 
 ## Troubleshooting
 
