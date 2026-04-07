@@ -169,6 +169,7 @@ async function loadCredentials() {
 // ── Logs ────────────────────────────────────────────────
 
 let logFilter = 'all';
+let _lastLogSignature = null;
 
 async function loadLogs() {
   const data = await api('GET', 'logs?lines=300');
@@ -188,6 +189,14 @@ async function loadLogs() {
   };
   const filterFn = filterMap[logFilter] || filterMap['all'];
   const lines = data.lines.filter(filterFn);
+  const signature = lines.join('\n');
+  if (signature === _lastLogSignature) {
+    const countEl = document.getElementById('log-count');
+    if (countEl) countEl.textContent = `${lines.length} of ${data.lines.length} lines`;
+    return;
+  }
+  _lastLogSignature = signature;
+  const wasAtBottom = v.scrollTop + v.clientHeight >= v.scrollHeight - 20;
   v.innerHTML = lines.map(l => {
     let c = '';
     if (l.includes('[ERROR]')) c = 'error';
@@ -195,7 +204,7 @@ async function loadLogs() {
     else if (l.includes('[INFO]')) c = 'info';
     return `<div class="${c}">${esc(l)}</div>`;
   }).join('');
-  v.scrollTop = v.scrollHeight;
+  if (wasAtBottom) v.scrollTop = v.scrollHeight;
 
   const countEl = document.getElementById('log-count');
   if (countEl) countEl.textContent = `${lines.length} of ${data.lines.length} lines`;
@@ -206,6 +215,7 @@ function setLogFilter(f) {
   document.querySelectorAll('#tab-logs .filter-bar .btn-sm').forEach(b => b.classList.remove('active'));
   const btn = document.querySelector(`#tab-logs .filter-bar [data-filter="${f}"]`);
   if (btn) btn.classList.add('active');
+  _lastLogSignature = null;
   loadLogs();
 }
 
@@ -218,7 +228,7 @@ function toggleLogAutoRefresh() {
   }
 }
 
-async function clearLogs() { await api('POST', 'logs/clear'); toast('Logs cleared'); loadLogs(); }
+async function clearLogs() { await api('POST', 'logs/clear'); toast('Logs cleared'); _lastLogSignature = null; loadLogs(); }
 
 // ── Feed ────────────────────────────────────────────────
 
@@ -275,6 +285,12 @@ function renderFeedMessages(append) {
   const el = document.getElementById('feed-list');
   const countEl = document.getElementById('feed-count');
   if (countEl) countEl.textContent = `Showing ${_feedMessages.length} of ${_feedTotal} messages`;
+
+  if (!append) {
+    const sig = _feedMessages.map(m => (m.id || '') + '|' + (m.timestamp || m.created_at || '') + '|' + (m.source || '')).join('\n');
+    if (el && el.__lastFeedSig === sig) return;
+    if (el) el.__lastFeedSig = sig;
+  }
 
   if (!_feedMessages.length) {
     el.innerHTML = _feedQuery
@@ -846,12 +862,25 @@ let _analyticsData = null;
 let _volumeRange = '7d';
 let _analyticsInterval = null;
 
-function getOrCreateChart(id, config) {
-  if (_charts[id]) { _charts[id].destroy(); }
+function getOrCreateChart(id, config, { animate = false } = {}) {
+  const existing = _charts[id];
+  if (existing) {
+    existing.data.labels = config.data.labels;
+    existing.data.datasets = config.data.datasets;
+    existing.update(animate ? undefined : 'none');
+    return existing;
+  }
   const ctx = document.getElementById(id);
   if (!ctx) return null;
   _charts[id] = new Chart(ctx, config);
   return _charts[id];
+}
+
+function setHTMLIfChanged(el, html) {
+  if (!el) return;
+  if (el.__lastHTML === html) return;
+  el.__lastHTML = html;
+  el.innerHTML = html;
 }
 
 const _chartStyle = {
@@ -865,7 +894,7 @@ function setVolumeRange(range) {
   document.querySelectorAll('#tab-analytics [data-range]').forEach(b => b.classList.remove('active'));
   const btn = document.querySelector(`#tab-analytics [data-range="${range}"]`);
   if (btn) btn.classList.add('active');
-  if (_analyticsData) renderVolumeChart(_analyticsData);
+  if (_analyticsData) renderVolumeChart(_analyticsData, { animate: true });
 }
 
 function _mergeSourceData(obj) {
@@ -888,7 +917,7 @@ function _mergeSourceData(obj) {
   return merged;
 }
 
-function renderVolumeChart(data) {
+function renderVolumeChart(data, { animate = false } = {}) {
   const allSources = [...new Set([
     ...Object.keys(data.by_source || {}),
     ...Object.values(data.hourly || {}).flatMap(h => Object.keys(h)),
@@ -941,7 +970,7 @@ function renderVolumeChart(data) {
       },
       interaction: { intersect: false, mode: 'index' },
     },
-  });
+  }, { animate });
 }
 
 async function loadAnalytics() {
@@ -961,22 +990,22 @@ async function loadAnalytics() {
   const lastMsg = data.last_message_at ? data.last_message_at.substring(11, 16) + ' UTC' : 'none';
   const sourceCount = (health.connectors || []).filter(c => c.type === 'source').length;
   const allHealthy = health.connectors_healthy === health.connectors_total;
-  document.getElementById('analytics-summary').innerHTML = `
+  setHTMLIfChanged(document.getElementById('analytics-summary'), `
     <div class="status-chip"><div><div class="value">${data.today || 0}</div><div class="meta">Messages today</div></div></div>
     <div class="status-chip"><div><div class="value">${data.this_week || 0}</div><div class="meta">This week</div></div></div>
     <div class="status-chip"><div><div class="value">${sourceCount}</div><div class="meta">Sources active</div></div></div>
     <div class="status-chip"><div class="dot ${allHealthy ? 'green' : 'red'}"></div><div><div class="value">${health.connectors_healthy || 0}/${health.connectors_total || 0}</div><div class="meta">Connectors</div></div></div>
     <div class="status-chip"><div><div class="value">${upHrs}h ${upMin}m</div><div class="meta">Uptime</div></div></div>
     <div class="status-chip"><div><div class="value">${lastMsg}</div><div class="meta">Last message</div></div></div>
-  `;
+  `);
 
   // Connector health bar
   const connectors = health.connectors || [];
-  document.getElementById('status-bar').innerHTML = connectors.map(c => {
+  setHTMLIfChanged(document.getElementById('status-bar'), connectors.map(c => {
     let ago = 'never';
     if (c.last_success) {
       const secs = Math.round(Date.now() / 1000 - c.last_success);
-      if (secs < 60) ago = secs + 's ago';
+      if (secs < 60) ago = '<1m ago';
       else if (secs < 3600) ago = Math.floor(secs / 60) + 'm ago';
       else ago = Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm ago';
     }
@@ -988,7 +1017,7 @@ async function loadAnalytics() {
         ${c.last_error ? `<div class="meta" style="color:var(--red)">${esc(c.last_error)}</div>` : ''}
       </div>
     </div>`;
-  }).join('');
+  }).join(''));
 
   // Normalize legacy source names
   data.by_source = _mergeSourceData(data.by_source || {});
@@ -1057,7 +1086,7 @@ async function loadAnalytics() {
   // Top authors
   const authorsEl = document.getElementById('analytics-authors');
   if (authorsEl && data.top_authors && data.top_authors.length) {
-    authorsEl.innerHTML = data.top_authors.map(a => `
+    setHTMLIfChanged(authorsEl, data.top_authors.map(a => `
       <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);align-items:center">
         <div>
           <span style="color:${SOURCE_COLORS[a.source] || 'var(--accent)'};font-weight:600;font-size:10px;text-transform:uppercase">${esc(a.source)}</span>
@@ -1065,16 +1094,16 @@ async function loadAnalytics() {
         </div>
         <span style="font-family:'Fira Code',monospace;color:var(--text2)">${a.count}</span>
       </div>
-    `).join('');
+    `).join(''));
   } else if (authorsEl) {
-    authorsEl.innerHTML = '<div style="color:var(--text2);padding:20px;text-align:center">No data yet. <a href="#" onclick="switchTab(\'sources\');return false" style="color:var(--accent)">Add sources</a> to start monitoring.</div>';
+    setHTMLIfChanged(authorsEl, '<div style="color:var(--text2);padding:20px;text-align:center">No data yet. <a href="#" onclick="switchTab(\'sources\');return false" style="color:var(--accent)">Add sources</a> to start monitoring.</div>');
   }
 
   // System info — only show what's not already in KPIs
   const sysEl = document.getElementById('dashboard-system');
   if (sysEl) {
     const notifierCount = connectors.filter(c => c.type === 'notifier').length;
-    sysEl.innerHTML = `
+    setHTMLIfChanged(sysEl, `
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Notifiers</span><span>${notifierCount} active</span></div>
         <div style="display:flex;justify-content:space-between"><span style="color:var(--text2)">Retention</span><span>${_lastLoadedConfig?.database?.retention_days || 90} days</span></div>
@@ -1092,7 +1121,7 @@ async function loadAnalytics() {
           <div id="update-status" style="margin-top:6px"></div>
         </div>
       </div>
-    `;
+    `);
   }
 
   // Recent activity feed (last 10 messages)
@@ -1111,10 +1140,10 @@ async function loadDashboardFeed() {
   const el = document.getElementById('dashboard-feed');
   if (!el || !data || !data.messages) return;
   if (!data.messages.length) {
-    el.innerHTML = '<div style="color:var(--text2);padding:16px;text-align:center">No messages yet. <a href="#" onclick="switchTab(\'sources\');return false" style="color:var(--accent)">Configure sources</a> to start monitoring.</div>';
+    setHTMLIfChanged(el, '<div style="color:var(--text2);padding:16px;text-align:center">No messages yet. <a href="#" onclick="switchTab(\'sources\');return false" style="color:var(--accent)">Configure sources</a> to start monitoring.</div>');
     return;
   }
-  el.innerHTML = data.messages.map(m => {
+  setHTMLIfChanged(el, data.messages.map(m => {
     const ts = m.timestamp || m.created_at || '';
     const time = ts ? ts.substring(11, 16) : '';
     const date = ts ? ts.substring(0, 10) : '';
@@ -1128,7 +1157,7 @@ async function loadDashboardFeed() {
       </div>
       <div style="margin-top:2px;color:var(--text)">${content}</div>
     </div>`;
-  }).join('');
+  }).join(''));
 }
 
 // ── LibreTranslate Management ────────────────────────────
